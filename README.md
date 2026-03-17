@@ -4,13 +4,13 @@ A deterministic audio and display baseline enforcement system for shared Windows
 
 ## Target Audience
 
-- Administrators of shared computers in conference rooms or classrooms.
-- Admins or owners of computers connected to complex AV systems, including home theater setups.
+- Administrators of shared computers installed in conference rooms or classrooms.
+- Admins or owners of computers installed as part of complex AV systems, including home theaters.
 - Admins or owners of computers used as kiosks or digital signage.
 
 ## Goals
 
-This system is designed to keep audio and display configuration stable and predictable:
+This system is designed to keep audio and display configuration stable and predictable.
 
 - Prevent Windows from selecting the wrong audio devices or display configuration.
 - Prevent Windows from "guessing" device/configuration state by deterministically recalling known-good settings at login.
@@ -23,16 +23,15 @@ Windows and users change audio and display configuration in shared environments.
 
 ## Initial Setup
 
-If you plan to run scripts directly, no additional setup is required. Run the PowerShell script you need from the `installer_scripts` folder. When prompted for a target PC, provide a remote hostname or `localhost`.
+If you plan to run individual scripts directly, no additional setup is required. Run the PowerShell script you need from the `installer_scripts` folder. When prompted for a target PC, provide a remote hostname or `localhost`.
 
 If you plan to deploy to multiple PCs at once:
 
-- Install Python 3.14 or later. This project currently uses only the standard library.
+- Install Python 3.14 or later on your workstation. This project currently uses only the standard library.
 - Follow the [Remote Deploy](#remote-deploy-script) instructions below.
-- Ensure WinRM is working in your environment.
-- Ensure your account has local administrator rights on target computers.
+- Ensure WinRM is working in your environment and your account has the proper permissions. To check: `Test-WSMan -ComputerName <name of a remote PC>`
 
-If you plan to deploy BGInfo, place `BGInfo64.exe`, your `.bgi` file, and the associated background image in the appropriate yearly folder under `BGInfo`. The current script expects assets in `BGInfo\<year>` and uses the `$year` value in `InstallBGInfo.ps1` to select that folder.
+If you plan to deploy BGInfo, place the latest `BGInfo64.exe`, your `.bgi` file, and the associated background image in the appropriate yearly folder under `BGInfo`. The current script expects assets in `BGInfo\<year>` and uses the `$year` value in `InstallBGInfo.ps1` to select that folder, but you can specify custom paths and filenames.
 
 ## Modules and Scripts
 
