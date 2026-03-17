@@ -270,17 +270,6 @@ try {
         }
     }
 
-    # Untrust PSGallery
-    try {
-        Invoke-LocalOrRemote -ComputerName $PC -IsLocal $isLocal -ScriptBlock {
-            Set-PSRepository -Name PSGallery -InstallationPolicy Untrusted -ErrorAction Stop
-        }
-    }
-    catch {
-        Write-Output "$PC Failed to un-register PSGallery repository: $_"
-    }
-
-
     Write-Output "$PC Please run $localSaveDisplayScriptPath on machine to save display configurations"
     Write-Output "$PC Installed DisplayConfig and Scripts"
 
