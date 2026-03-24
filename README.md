@@ -121,7 +121,7 @@ It performs the following:
 
 #### BGInfo Usage
 
-- Place the required BGInfo assets in the expected yearly folder under `BGInfo`.
+- Place the required BGInfo assets in the expected yearly folder under `BGInfo`. You'll need the latest BGInfo64.exe, your desktop image file, and your layout .bg file.
 - Update the `$year` variable in `InstallBGInfo.ps1` when rotating to a new yearly profile.
 - Include `InstallBGInfo.ps1` in `pwsh_scripts` only on systems where you want BGInfo applied at login.
 
@@ -139,4 +139,4 @@ The `SAVE_AV_SETTINGS.bat` file is placed on the Public Desktop, requires admin 
 
 ## Notes
 
-The startup script is fast and lightweight, but Windows may take several seconds after login to execute Startup-folder items. Users may briefly see a blank command prompt window before the saved settings are applied.
+The startup script is fast and lightweight, but Windows may take several seconds after login to execute Startup-folder items. Users may also briefly see a blank command prompt window before the saved settings are applied.
