@@ -21,7 +21,11 @@ Windows and users often change audio and display configuration in shared environ
 
 > Optional: This system can also deploy Sysinternals [BGInfo](https://learn.microsoft.com/en-us/sysinternals/downloads/bginfo) to write information over the desktop wallpaper at login. This is useful for showing who is logged in and for displaying asset or service tag information that helps users submit support tickets.
 
-## Initial Setup
+## Usage and Requirements
+
+Both the deployment script and individual scripts can target local or remote PC's via WinRM. If you plan on deploying remotely, make sure your workstation has the proper permissions and WinRM is working:
+
+`Test-WSMan -ComputerName <name of a remote PC>`
 
 If you plan to run individual scripts directly, no additional setup is required. Run the PowerShell script you need from the `installer_scripts` folder. When prompted for a target PC, provide a remote hostname or `localhost`.
 
@@ -29,11 +33,10 @@ If you plan to deploy to multiple PCs at once:
 
 - Install Python 3.14 or later on your workstation. This project currently uses only the standard library.
 - Follow the [Remote Deploy](#remote-deployment-script) instructions below.
-- Ensure WinRM is working in your environment and your account has the proper permissions. To check: `Test-WSMan -ComputerName <name of a remote PC>`
 
 If you plan to deploy BGInfo, place the latest `BGInfo64.exe`, your `.bgi` file, and the associated background image in the appropriate yearly folder under `BGInfo`. The current script expects assets in `BGInfo\<year>` and uses the `$year` value in `InstallBGInfo.ps1` to select that folder, but you can specify custom paths and filenames.
 
-## Modular architecture
+## Modular Architecture
 
 This system is modular, so you can choose which features and installers to deploy. You can either run scripts under `installer_scripts` directly, or use `00_remote_deploy.py` to install a selected set of scripts across multiple computers.
 
@@ -43,24 +46,26 @@ The deploy script processes multiple target PCs concurrently. For each target PC
 
 ### Usage
 
+0. Clone this repository to your admin workstation.
 1. Create `targets.txt` in the repository root (use `targets.txt.example` as a reference).
-2. Add one target per line in `targets.txt`.
-3. Edit the `pwsh_scripts` list to include only what you want to deploy.
+2. Add one PC target per line in `targets.txt`.
+3. Edit the `pwsh_scripts` list in `00_remote_deploy.py` to include only what you want to deploy.
 
-Example (BGInfo skipped):
+    Example (BGInfo skipped):
 
-```python
-pwsh_scripts = [
-    "installer_scripts\\./InstallAudioDeviceCmdlets.ps1",
-    "installer_scripts\\./InstallDisplayConfig.ps1",
-    # "installer_scripts\\./InstallBGInfo.ps1",
-    "installer_scripts\\./Cleanup.ps1",  # Cleanup must be last
-]
-```
+    ```python
+    pwsh_scripts = [
+        "installer_scripts\\./InstallAudioDeviceCmdlets.ps1",
+        "installer_scripts\\./InstallDisplayConfig.ps1",
+        # "installer_scripts\\./InstallBGInfo.ps1",
+        "installer_scripts\\./Cleanup.ps1",  # Cleanup must be last
+    ]
+    ```
 
-1. Run:
+Run:
 
 ```powershell
+cd <to your repo root>
 python .\00_remote_deploy.py
 ```
 
