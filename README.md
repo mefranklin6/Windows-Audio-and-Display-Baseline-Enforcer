@@ -116,8 +116,6 @@ If you are installing multiple tools and running `Cleanup.ps1` last, continue to
 
 This installer deploys Sysinternals [BGInfo](https://learn.microsoft.com/en-us/sysinternals/downloads/bginfo) assets from the repo and configures startup execution.
 
-![example desktop with BGInfo applied](images/BGInfo_example.png)
-
 It performs the following:
 
 1. Copies BGInfo executable, config, and background image to `C:\ProgramData\CTS`.
