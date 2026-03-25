@@ -34,7 +34,7 @@ If you plan to deploy to multiple PCs at once:
 - Install Python 3.14 or later on your workstation. This project currently uses only the standard library.
 - Follow the [Remote Deploy](#remote-deployment-script) instructions below.
 
-If you plan to deploy BGInfo, place the latest `BGInfo64.exe`, your `.bgi` file, and the associated background image in the appropriate yearly folder under `BGInfo`. The current script expects assets in `BGInfo\<year>` and uses the `$year` value in `InstallBGInfo.ps1` to select that folder, but you can specify custom paths and filenames.
+If you plan to deploy BGInfo, place the latest `BGInfo64.exe`, one `.bgi` file, and one background image in the folder configured by `$folder` in `InstallBGInfo.ps1`. The script scans `BGInfo\<folder>` and requires exactly one match for each asset type.
 
 ## Modular Architecture
 
@@ -118,14 +118,14 @@ This installer deploys Sysinternals [BGInfo](https://learn.microsoft.com/en-us/s
 
 It performs the following:
 
-1. Copies BGInfo executable, config, and background image to `C:\ProgramData\CTS`.
+1. Copies the discovered BGInfo executable, config, and background image to `C:\ProgramData\CTS`.
 2. Installs startup launcher `cts_bginfo_startup.bat` in the Windows Startup folder.
 3. Replaces the BGInfo config each run to keep the deployed profile current.
 
 #### BGInfo Usage
 
-- Place the required BGInfo assets in the expected yearly folder under `BGInfo`. You'll need the latest BGInfo64.exe, your desktop image file, and your layout .bg file.
-- Update the `$year` variable in `InstallBGInfo.ps1` when rotating to a new yearly profile.
+- Place the required BGInfo assets in `BGInfo\<folder>`, where `<folder>` matches the `$folder` value in `InstallBGInfo.ps1`.
+- That folder must contain exactly one `BGInfo64.exe`, exactly one `.bgi` file, and exactly one supported image file (`.jpg`, `.jpeg`, `.png`, `.bmp`, or `.gif`).
 - Include `InstallBGInfo.ps1` in `pwsh_scripts` only on systems where you want BGInfo applied at login.
 
 ### Cleanup Script
