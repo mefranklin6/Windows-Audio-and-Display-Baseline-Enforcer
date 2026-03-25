@@ -17,7 +17,7 @@ Import-Module (Join-Path $PSScriptRoot 'shared\SharedHelpers.psm1') -Force
 
 $isLocal = Test-IsLocalComputer -ComputerName $PC
 
-Write-Output "$PC Installing AudioDeviceCmdlets"
+Write-Output "INFO: Installing AudioDeviceCmdlets"
 
 $AudioDeviceCmdletsVersion = '3.2'
 
@@ -101,7 +101,7 @@ try {
         if (Test-Path -LiteralPath $destManifestPath) {
             try {
                 Import-Module -Name $destManifestPath -Force -ErrorAction Stop
-                Write-Output "$env:COMPUTERNAME $ModuleName $ModuleVersion already installed at $destVersionRoot, skipping."
+                Write-Output "INFO: $ModuleName $ModuleVersion already installed at $destVersionRoot, skipping."
                 return
             }
             catch {
@@ -151,7 +151,7 @@ try {
         catch { }
 
         Import-Module -Name $destManifestPath -Force -ErrorAction Stop
-        Write-Output "$env:COMPUTERNAME Installed $ModuleName $ModuleVersion from ZIP to $destVersionRoot"
+        Write-Output "INFO: Installed $ModuleName $ModuleVersion from ZIP to $destVersionRoot"
     }
 
     Start-Sleep -Seconds 1
@@ -191,7 +191,7 @@ try {
         throw "$PC AudioDeviceCmdlets not installed"
     }
     else {
-        Write-Output "$PC AudioDeviceCmdlets installed ($($installed.Version))"
+        Write-Output "INFO: AudioDeviceCmdlets installed ($($installed.Version))"
     }
 
 
@@ -243,7 +243,7 @@ try {
         throw "$PC save_audio_config.ps1 not found at $audioSaveScriptDestPath"
     }
 
-    Write-Output "$PC Installed audio recall and save scripts"
+    Write-Output "INFO: Installed audio recall and save scripts"
 
     # Standalone: drop SAVE_AUDIO_SETTINGS.bat on Public Desktop
     if ($standalone) {
@@ -259,13 +259,13 @@ try {
             '(goto) 2>nul & del "%~f0"'
         )
 
-        Write-Output "$PC Dropped SAVE_AUDIO_SETTINGS.bat on Public Desktop"
+        Write-Output "INFO: Dropped SAVE_AUDIO_SETTINGS.bat on Public Desktop"
     }
 
 
 } # end try
 catch {
-    Write-Output "$PC InstallAudioDeviceCmdlets failed: $_"
+    Write-Output "ERROR: InstallAudioDeviceCmdlets failed: $_"
     Exit 1
 }
 

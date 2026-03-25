@@ -36,7 +36,7 @@ try {
     $startupFolder = Join-Path $prefix $startupFolderSuffix
 
     if (!(Test-Path $startupFolder)) {
-        Write-Output "$PC has no startup path"
+        Write-Output "ERROR: Startup path not found"
         throw
     }
 
@@ -47,10 +47,10 @@ try {
         if (Test-Path -LiteralPath $legacyBatPath) {
             try {
                 Remove-Item -LiteralPath $legacyBatPath -Force -ErrorAction Stop
-                Write-Output "$PC Removed legacy Startup bat: $legacyBatPath"
+                Write-Output "INFO: Removed legacy Startup bat: $legacyBatPath"
             }
             catch {
-                Write-Output "$PC Could not remove legacy Startup bat: $legacyBatPath ($($_.Exception.Message))"
+                Write-Output "WARNING: Could not remove legacy Startup bat: $legacyBatPath ($($_.Exception.Message))"
             }
         }
     }
@@ -117,7 +117,7 @@ try {
         }
 
         $newContent | Set-Content -LiteralPath $consolidatedStartupBatPath -Force -Encoding ASCII
-        Write-Output "$PC Wrote consolidated Startup bat to $consolidatedStartupBatPath"
+        Write-Output "INFO: Wrote consolidated Startup bat to $consolidatedStartupBatPath"
 
         # Remove per-script bats so they don't also run at login.
         Remove-Item -LiteralPath $displayStartupBatPath -Force -ErrorAction SilentlyContinue
@@ -125,7 +125,7 @@ try {
         Remove-Item -LiteralPath $bginfoStartupBatPath -Force -ErrorAction SilentlyContinue
     }
     else {
-        Write-Output "$PC No CTS startup bats found to consolidate"
+        Write-Output "INFO: No CTS startup bats found to consolidate"
     }
 
     $saveFile = "SAVE_AV_SETTINGS.bat"
@@ -150,12 +150,12 @@ try {
     $standaloneAudioSavePath = Join-Path $publicDesktopPath 'SAVE_AUDIO_SETTINGS.bat'
     if (Test-Path -LiteralPath $standaloneAudioSavePath) {
         Remove-Item -LiteralPath $standaloneAudioSavePath -Force -ErrorAction SilentlyContinue
-        Write-Output "$PC Removed standalone SAVE_AUDIO_SETTINGS.bat (consolidated into SAVE_AV_SETTINGS.bat)"
+        Write-Output "INFO: Removed standalone SAVE_AUDIO_SETTINGS.bat (consolidated into SAVE_AV_SETTINGS.bat)"
     }
 }
 
 catch {
-    Write-Output "$PC Cleanup failed: $_"
+    Write-Output "ERROR: Cleanup failed: $_"
     Exit 1
 }
 

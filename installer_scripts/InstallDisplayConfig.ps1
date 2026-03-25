@@ -19,7 +19,7 @@ Import-Module (Join-Path $PSScriptRoot 'shared\SharedHelpers.psm1') -Force
 
 $isLocal = Test-IsLocalComputer -ComputerName $PC
 
-Write-Output "$PC Installing DisplayConfig"
+Write-Output "INFO: Installing DisplayConfig"
 
 
 try {
@@ -114,7 +114,7 @@ try {
         if (Test-Path -LiteralPath $destManifestPath) {
             try {
                 Import-Module -Name $destManifestPath -Force -ErrorAction Stop
-                Write-Output "$env:COMPUTERNAME $ModuleName $ModuleVersion already installed at $destVersionRoot, skipping."
+                Write-Output "INFO: $ModuleName $ModuleVersion already installed at $destVersionRoot, skipping."
                 return
             }
             catch {
@@ -164,7 +164,7 @@ try {
         catch { }
 
         Import-Module -Name $destManifestPath -Force -ErrorAction Stop
-        Write-Output "$env:COMPUTERNAME Installed $ModuleName $ModuleVersion from ZIP to $destVersionRoot"
+        Write-Output "INFO: Installed $ModuleName $ModuleVersion from ZIP to $destVersionRoot"
     }
 
     Start-Sleep -Seconds 1
@@ -204,7 +204,7 @@ try {
         throw "$PC DisplayConfig (mefranklin6 fork) not installed"
     }
     else {
-        Write-Output "$PC DisplayConfig (mefranklin6 fork) installed ($($installed.Version))"
+        Write-Output "INFO: DisplayConfig (mefranklin6 fork) installed ($($installed.Version))"
     }
 
     #### Copy execution scripts to destination ####
@@ -270,12 +270,12 @@ try {
         }
     }
 
-    Write-Output "$PC Please run $localSaveDisplayScriptPath on machine to save display configurations"
-    Write-Output "$PC Installed DisplayConfig and Scripts"
+    Write-Output "INFO: Please run $localSaveDisplayScriptPath on machine to save display configurations"
+    Write-Output "INFO: Installed DisplayConfig and Scripts"
 
 } # end try
 catch {
-    Write-Output "$PC InstallDisplayConfig failed: $_"
+    Write-Output "ERROR: InstallDisplayConfig failed: $_"
     Exit 1
 }
 
