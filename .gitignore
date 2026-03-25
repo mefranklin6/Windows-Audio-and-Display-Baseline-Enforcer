@@ -215,6 +215,7 @@ __marimo__/
 *.xml
 *.msi
 *.exe
+*.bgi
 *.txt
 !Readme.txt
 *.json
