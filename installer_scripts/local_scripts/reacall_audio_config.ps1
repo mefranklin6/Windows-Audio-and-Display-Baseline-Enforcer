@@ -195,14 +195,6 @@ function Restore-DefaultDevices {
 
 # --- Main (silent) ---
 try {
-    # Verify required module is available
-    foreach ($cmd in @('Get-AudioDevice', 'Set-AudioDevice')) {
-        if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
-            Write-Log "$cmd not found. AudioDeviceCmdlets not installed/imported." "ERROR"
-            exit 0
-        }
-    }
-
     Restore-DefaultDevices
     Restore-AudioLevels -LevelsPath $LevelsJsonPath
 }
