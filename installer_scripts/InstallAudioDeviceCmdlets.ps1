@@ -19,7 +19,7 @@ $isLocal = Test-IsLocalComputer -ComputerName $PC
 
 Write-Output "INFO: Installing AudioDeviceCmdlets"
 
-$AudioDeviceCmdletsVersion = '3.2'
+$AudioDeviceCmdletsVersion = '3.3'
 
 $AudioDeviceCmdletsModuleName = 'AudioDeviceCmdlets'
 $AudioDeviceCmdletsZipUrl = "https://github.com/mefranklin6/AudioDeviceCmdlets/releases/download/v$AudioDeviceCmdletsVersion/AudioDeviceCmdlets-$AudioDeviceCmdletsVersion.zip"
@@ -74,6 +74,59 @@ try {
             return $null
         }
 
+        function Remove-OldModuleVersions {
+            param(
+                [Parameter(Mandatory = $true)]
+                [string[]]$ModulePaths,
+                [Parameter(Mandatory = $true)]
+                [string]$ModuleName,
+                [Parameter(Mandatory = $true)]
+                [string]$TargetVersion
+            )
+
+            foreach ($modulePath in ($ModulePaths | Select-Object -Unique)) {
+                if ([string]::IsNullOrWhiteSpace($modulePath)) {
+                    continue
+                }
+
+                $moduleRoot = Join-Path $modulePath $ModuleName
+                if (-not (Test-Path -LiteralPath $moduleRoot)) {
+                    continue
+                }
+
+                $versionDirectories = Get-ChildItem -LiteralPath $moduleRoot -Directory -ErrorAction SilentlyContinue
+                foreach ($versionDirectory in $versionDirectories) {
+                    if ($versionDirectory.Name -eq $TargetVersion) {
+                        continue
+                    }
+
+                    Remove-Item -LiteralPath $versionDirectory.FullName -Recurse -Force -ErrorAction Stop
+                    Write-Output "INFO: Removed old $ModuleName version $($versionDirectory.Name) from $moduleRoot"
+                }
+
+                $legacyManifestPath = Join-Path $moduleRoot "${ModuleName}.psd1"
+                if (-not (Test-Path -LiteralPath $legacyManifestPath)) {
+                    continue
+                }
+
+                $legacyVersion = $null
+                try {
+                    $legacyVersion = (Test-ModuleManifest -Path $legacyManifestPath -ErrorAction Stop).Version.ToString()
+                }
+                catch {
+                    Write-Output "WARNING: Could not read legacy manifest at $legacyManifestPath; removing unversioned module files to avoid stale module resolution"
+                }
+
+                if ($legacyVersion -eq $TargetVersion) {
+                    continue
+                }
+
+                Get-ChildItem -LiteralPath $moduleRoot -File -Force -ErrorAction SilentlyContinue |
+                Remove-Item -Force -ErrorAction Stop
+                Write-Output "INFO: Removed unversioned $ModuleName files from $moduleRoot"
+            }
+        }
+
         $modulePaths = @()
         if (-not [string]::IsNullOrWhiteSpace($env:PSModulePath)) {
             $modulePaths = $env:PSModulePath -split ';' | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
@@ -98,15 +151,23 @@ try {
         $destVersionRoot = Join-Path (Join-Path $installRoot $ModuleName) $ModuleVersion
         $destManifestPath = Join-Path $destVersionRoot "${ModuleName}.psd1"
 
+        $alreadyInstalled = $false
+
         if (Test-Path -LiteralPath $destManifestPath) {
             try {
                 Import-Module -Name $destManifestPath -Force -ErrorAction Stop
-                Write-Output "INFO: $ModuleName $ModuleVersion already installed at $destVersionRoot, skipping."
-                return
+                $alreadyInstalled = $true
             }
             catch {
                 # fall through to reinstall
             }
+        }
+
+        Remove-OldModuleVersions -ModulePaths $modulePaths -ModuleName $ModuleName -TargetVersion $ModuleVersion
+
+        if ($alreadyInstalled) {
+            Write-Output "INFO: $ModuleName $ModuleVersion already installed at $destVersionRoot, skipping reinstall."
+            return
         }
 
         $tempRoot = Join-Path $env:TEMP ("${ModuleName}_" + [Guid]::NewGuid().ToString('N'))
@@ -166,9 +227,6 @@ try {
             [string]$ModuleVersion
         )
 
-        $m = Get-Module -ListAvailable -Name $ModuleName | Sort-Object Version -Descending | Select-Object -First 1
-        if ($m) { return $m }
-
         if ([string]::IsNullOrWhiteSpace($env:PSModulePath)) {
             return $null
         }
@@ -180,7 +238,11 @@ try {
                     Import-Module -Name $candidate -Force -ErrorAction Stop
                 }
                 catch { }
-                return (Get-Module -ListAvailable -Name $ModuleName | Sort-Object Version -Descending | Select-Object -First 1)
+
+                return (Get-Module -ListAvailable -Name $ModuleName |
+                    Where-Object { $_.Version -eq ([version]$ModuleVersion) } |
+                    Sort-Object Version -Descending |
+                    Select-Object -First 1)
             }
         }
 
