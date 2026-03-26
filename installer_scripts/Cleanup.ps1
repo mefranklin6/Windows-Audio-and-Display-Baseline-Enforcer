@@ -9,6 +9,13 @@ Param(
 # Optomizes a non-standalone deployment.
 # Run this code as the last step in a non-standalone deployment
 
+# Feature Flag: Add reboot and Log Out shortcuts to the public desktop
+# These shortcuts recall settings first.
+$addShortcuts = $true
+
+# Give the recall launcher a brief head start, but always continue with logout/reboot.
+$shortcutRecallGraceSeconds = 5
+
 # Workaround for passing in booleans from Python
 if ($standalone -eq "true") {
     $standalone = $true
@@ -20,6 +27,42 @@ else {
 Import-Module (Join-Path $PSScriptRoot 'shared\SharedHelpers.psm1') -Force
 
 $isLocal = Test-IsLocalComputer -ComputerName $PC
+
+function Set-ShortcutActionLauncher {
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$LauncherPath,
+        [Parameter(Mandatory = $true)]
+        [string]$RecallBatPath,
+        [Parameter(Mandatory = $true)]
+        [string]$ShutdownCommand,
+        [Parameter(Mandatory = $true)]
+        [int]$GraceSeconds
+    )
+
+    $launcherContent = @(
+        '@echo off'
+        'setlocal'
+        ('set "RECALL_BAT={0}"' -f $RecallBatPath)
+        'if exist "%RECALL_BAT%" ('
+        '    start "" /min cmd.exe /c call "%RECALL_BAT%"'
+    )
+
+    if ($GraceSeconds -gt 0) {
+        $launcherContent += ('    timeout /t {0} /nobreak >nul' -f $GraceSeconds)
+    }
+
+    $launcherContent += @(
+        ')'
+        $ShutdownCommand
+        'endlocal'
+    )
+
+    if ($PSCmdlet.ShouldProcess($LauncherPath, 'Write shortcut action launcher')) {
+        $launcherContent | Set-Content -LiteralPath $LauncherPath -Force -Encoding ASCII
+    }
+}
 
 try {
     if ($standalone -and -not $isLocal) {
@@ -61,7 +104,7 @@ try {
     $displayStartupBatPath = Join-Path $startupFolder 'cts_display_startup.bat'
     $audioStartupBatPath = Join-Path $startupFolder 'cts_audio_startup.bat'
     $bginfoStartupBatPath = Join-Path $startupFolder 'cts_bginfo_startup.bat'
-    $consolidatedStartupBatPath = Join-Path $startupFolder 'av_config_startup.bat'
+    $consolidatedStartupBatPath = Join-Path $startupFolder 'av_config_recall.bat'
 
     $displayLines = @()
     $audioLines = @()
@@ -128,6 +171,11 @@ try {
         Write-Output "INFO: No CTS startup bats found to consolidate"
     }
 
+    $ctsFolder = Join-Path $prefix 'ProgramData\CTS'
+    if (-not (Test-Path -LiteralPath $ctsFolder)) {
+        New-Item -ItemType Directory -Path $ctsFolder -Force | Out-Null
+    }
+
     $saveFile = "SAVE_AV_SETTINGS.bat"
 
     $sourceScripts = Join-Path $PSScriptRoot 'local_scripts'
@@ -135,7 +183,7 @@ try {
     
     $publicDesktopPath = Join-Path $prefix "Users\Public\Desktop"
     $saveAvSettingsDesktopPath = Join-Path $publicDesktopPath $saveFile
-    $saveAvSettingsBackupPath = Join-Path $prefix "ProgramData\CTS\SAVE_AV_SETTINGS.bat"
+    $saveAvSettingsBackupPath = Join-Path $ctsFolder $saveFile
 
     Copy-Item $saveScriptSource $saveAvSettingsBackupPath
     Copy-Item $saveScriptSource $saveAvSettingsDesktopPath
@@ -152,6 +200,135 @@ try {
         Remove-Item -LiteralPath $standaloneAudioSavePath -Force -ErrorAction SilentlyContinue
         Write-Output "INFO: Removed standalone SAVE_AUDIO_SETTINGS.bat (consolidated into SAVE_AV_SETTINGS.bat)"
     }
+
+    if ($addShortcuts) {
+        $localCtsFolder = 'C:\ProgramData\CTS'
+        $localPublicDesktopPath = 'C:\Users\Public\Desktop'
+        $programDataStartupBatPath = Join-Path $ctsFolder 'av_config_recall.bat'
+        $localProgramDataStartupBatPath = Join-Path $localCtsFolder 'av_config_recall.bat'
+        $logoutActionBatPath = Join-Path $ctsFolder 'cts_log_out_and_recall_av.bat'
+        $localLogoutActionBatPath = Join-Path $localCtsFolder 'cts_log_out_and_recall_av.bat'
+        $rebootActionBatPath = Join-Path $ctsFolder 'cts_reboot_and_recall_av.bat'
+        $localRebootActionBatPath = Join-Path $localCtsFolder 'cts_reboot_and_recall_av.bat'
+        $localLogoutIconLocation = 'C:\Windows\System32\shell32.dll,44'
+        $localRebootIconLocation = 'C:\Windows\System32\shell32.dll,238'
+
+        $startupBatCopyContent = if (Test-Path -LiteralPath $consolidatedStartupBatPath) {
+            Get-Content -LiteralPath $consolidatedStartupBatPath
+        }
+        else {
+            @('@echo off')
+        }
+
+        if ($startupBatCopyContent.Count -eq 0) {
+            $startupBatCopyContent = @('@echo off')
+        }
+
+        $shutdownRecallBatContent = @(
+            $startupBatCopyContent | Where-Object { $_ -notmatch '(?i)bginfo|\.bgi\b' }
+        )
+
+        if ($shutdownRecallBatContent.Count -eq 0) {
+            $shutdownRecallBatContent = @('@echo off')
+        }
+
+        $shutdownRecallBatContent | Set-Content -LiteralPath $programDataStartupBatPath -Force -Encoding ASCII
+        Set-ShortcutActionLauncher -LauncherPath $logoutActionBatPath -RecallBatPath $localProgramDataStartupBatPath -ShutdownCommand 'shutdown.exe /l' -GraceSeconds $shortcutRecallGraceSeconds
+        Set-ShortcutActionLauncher -LauncherPath $rebootActionBatPath -RecallBatPath $localProgramDataStartupBatPath -ShutdownCommand 'shutdown.exe /r /t 1' -GraceSeconds $shortcutRecallGraceSeconds
+
+        Invoke-LocalOrRemote -ComputerName $PC -IsLocal $isLocal -ArgumentList @(
+            $localPublicDesktopPath,
+            $localLogoutActionBatPath,
+            $localRebootActionBatPath,
+            $localLogoutIconLocation,
+            $localRebootIconLocation,
+            $localCtsFolder
+        ) -ScriptBlock {
+            param(
+                [Parameter(Mandatory = $true)]
+                [string]$PublicDesktopPath,
+                [Parameter(Mandatory = $true)]
+                [string]$LogoutActionBatPath,
+                [Parameter(Mandatory = $true)]
+                [string]$RebootActionBatPath,
+                [Parameter(Mandatory = $true)]
+                [string]$LogoutIconLocation,
+                [Parameter(Mandatory = $true)]
+                [string]$RebootIconLocation,
+                [Parameter(Mandatory = $true)]
+                [string]$CtsFolder
+            )
+
+            $ErrorActionPreference = 'Stop'
+
+            function Set-DesktopShortcut {
+                [CmdletBinding(SupportsShouldProcess = $true)]
+                param(
+                    [Parameter(Mandatory = $true)]
+                    [string]$ShortcutPath,
+                    [Parameter(Mandatory = $true)]
+                    [string]$TargetPath,
+                    [Parameter(Mandatory = $true)]
+                    [string]$Description,
+                    [Parameter(Mandatory = $true)]
+                    [string]$IconLocation,
+                    [Parameter(Mandatory = $true)]
+                    [string]$WorkingDirectory
+                )
+
+                $shell = New-Object -ComObject WScript.Shell
+                try {
+                    if ($PSCmdlet.ShouldProcess($ShortcutPath, 'Create or update desktop shortcut')) {
+                        $shortcut = $shell.CreateShortcut($ShortcutPath)
+                        $shortcut.TargetPath = $TargetPath
+                        $shortcut.WorkingDirectory = $WorkingDirectory
+                        $shortcut.Description = $Description
+                        $shortcut.IconLocation = $IconLocation
+                        $shortcut.WindowStyle = 7
+                        $shortcut.Save()
+                    }
+                }
+                finally {
+                    [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
+                }
+            }
+
+            function Remove-ExistingDesktopShortcut {
+                [CmdletBinding(SupportsShouldProcess = $true)]
+                param(
+                    [Parameter(Mandatory = $true)]
+                    [string]$DesktopPath
+                )
+
+                $shortcutBaseNames = @('Log Out', 'Logout', 'Reboot')
+                $existingShortcuts = Get-ChildItem -LiteralPath $DesktopPath -File -Filter '*.lnk' -ErrorAction SilentlyContinue |
+                Where-Object { $shortcutBaseNames -contains $_.BaseName }
+
+                foreach ($shortcut in $existingShortcuts) {
+                    if ($PSCmdlet.ShouldProcess($shortcut.FullName, 'Remove existing desktop shortcut')) {
+                        Remove-Item -LiteralPath $shortcut.FullName -Force -ErrorAction SilentlyContinue
+                        Write-Output "INFO: Removed existing desktop shortcut at $($shortcut.FullName)"
+                    }
+                }
+            }
+
+            Remove-ExistingDesktopShortcut -DesktopPath $PublicDesktopPath
+
+            $logoutShortcutPath = Join-Path $PublicDesktopPath 'Log Out.lnk'
+            Set-DesktopShortcut -ShortcutPath $logoutShortcutPath -TargetPath $LogoutActionBatPath -Description 'Recall saved AV settings, then log out.' -IconLocation $LogoutIconLocation -WorkingDirectory $CtsFolder
+            Write-Output "INFO: Configured Log Out shortcut at $logoutShortcutPath"
+
+            $rebootShortcutPath = Join-Path $PublicDesktopPath 'Reboot.lnk'
+            Set-DesktopShortcut -ShortcutPath $rebootShortcutPath -TargetPath $RebootActionBatPath -Description 'Recall saved AV settings, then reboot.' -IconLocation $RebootIconLocation -WorkingDirectory $CtsFolder
+            Write-Output "INFO: Configured Reboot shortcut at $rebootShortcutPath"
+        }
+
+        Write-Output "INFO: Created ProgramData recall, log out, and reboot launchers in $ctsFolder"
+    }
+    else {
+        Write-Output 'INFO: Shortcut creation disabled by $addShortcuts'
+    }
+
 }
 
 catch {

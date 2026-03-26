@@ -7,7 +7,6 @@ import re
 import subprocess
 import sys
 from datetime import datetime
-import os
 
 MAX_WORKERS = 10 # Concurrent PC's to install on. Default is 10
 

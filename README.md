@@ -139,7 +139,24 @@ The `SAVE_AV_SETTINGS.bat` file is placed on the Public Desktop, requires admin 
 - Consolidates separate startup launchers into one ordered startup batch file.
 - Preserves display recall before audio recall and BGInfo execution.
 - Removes the standalone `SAVE_AUDIO_SETTINGS.bat` desktop file when settings are consolidated into `SAVE_AV_SETTINGS.bat`.
+- Creates `Log Out` and  `Reboot` shortcuts on the Public Desktop, which recall the AV settings first.
+- Stores persistent recall-first launchers batch files and SAVE_AV_SETTINGS.bat in `C:\ProgramData\CTS`.
 
 ## Notes
 
-The startup script is fast and lightweight, but Windows may take several seconds after login to execute Startup-folder items. Users may also briefly see a blank command prompt window before the saved settings are applied.
+The startup script is fast and lightweight, but Windows may take several seconds after login to execute Startup-folder items. Users may also briefly see a blank command prompt window (which is immediately minimized) before the saved settings are applied.
+
+## Changelog
+
+### v1.0.0
+
+26 March 2026
+
+- Initial feature-complete release
+
+### v1.1.0
+
+27 March 2026
+
+- Added changelog
+- New feature: Add `Reboot` and `Log Out` shortcuts, which recall saved Audio and Display settings first.
