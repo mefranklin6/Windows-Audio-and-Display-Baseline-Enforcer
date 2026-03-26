@@ -29,6 +29,7 @@ Import-Module (Join-Path $PSScriptRoot 'shared\SharedHelpers.psm1') -Force
 $isLocal = Test-IsLocalComputer -ComputerName $PC
 
 function Set-ShortcutActionLauncher {
+    [CmdletBinding(SupportsShouldProcess = $true)]
     param(
         [Parameter(Mandatory = $true)]
         [string]$LauncherPath,
@@ -58,7 +59,9 @@ function Set-ShortcutActionLauncher {
         'endlocal'
     )
 
-    $launcherContent | Set-Content -LiteralPath $LauncherPath -Force -Encoding ASCII
+    if ($PSCmdlet.ShouldProcess($LauncherPath, 'Write shortcut action launcher')) {
+        $launcherContent | Set-Content -LiteralPath $LauncherPath -Force -Encoding ASCII
+    }
 }
 
 try {
@@ -259,6 +262,7 @@ try {
             $ErrorActionPreference = 'Stop'
 
             function Set-DesktopShortcut {
+                [CmdletBinding(SupportsShouldProcess = $true)]
                 param(
                     [Parameter(Mandatory = $true)]
                     [string]$ShortcutPath,
@@ -274,20 +278,23 @@ try {
 
                 $shell = New-Object -ComObject WScript.Shell
                 try {
-                    $shortcut = $shell.CreateShortcut($ShortcutPath)
-                    $shortcut.TargetPath = $TargetPath
-                    $shortcut.WorkingDirectory = $WorkingDirectory
-                    $shortcut.Description = $Description
-                    $shortcut.IconLocation = $IconLocation
-                    $shortcut.WindowStyle = 7
-                    $shortcut.Save()
+                    if ($PSCmdlet.ShouldProcess($ShortcutPath, 'Create or update desktop shortcut')) {
+                        $shortcut = $shell.CreateShortcut($ShortcutPath)
+                        $shortcut.TargetPath = $TargetPath
+                        $shortcut.WorkingDirectory = $WorkingDirectory
+                        $shortcut.Description = $Description
+                        $shortcut.IconLocation = $IconLocation
+                        $shortcut.WindowStyle = 7
+                        $shortcut.Save()
+                    }
                 }
                 finally {
                     [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
                 }
             }
 
-            function Remove-ExistingDesktopShortcuts {
+            function Remove-ExistingDesktopShortcut {
+                [CmdletBinding(SupportsShouldProcess = $true)]
                 param(
                     [Parameter(Mandatory = $true)]
                     [string]$DesktopPath
@@ -298,12 +305,14 @@ try {
                 Where-Object { $shortcutBaseNames -contains $_.BaseName }
 
                 foreach ($shortcut in $existingShortcuts) {
-                    Remove-Item -LiteralPath $shortcut.FullName -Force -ErrorAction SilentlyContinue
-                    Write-Output "INFO: Removed existing desktop shortcut at $($shortcut.FullName)"
+                    if ($PSCmdlet.ShouldProcess($shortcut.FullName, 'Remove existing desktop shortcut')) {
+                        Remove-Item -LiteralPath $shortcut.FullName -Force -ErrorAction SilentlyContinue
+                        Write-Output "INFO: Removed existing desktop shortcut at $($shortcut.FullName)"
+                    }
                 }
             }
 
-            Remove-ExistingDesktopShortcuts -DesktopPath $PublicDesktopPath
+            Remove-ExistingDesktopShortcut -DesktopPath $PublicDesktopPath
 
             $logoutShortcutPath = Join-Path $PublicDesktopPath 'Log Out.lnk'
             Set-DesktopShortcut -ShortcutPath $logoutShortcutPath -TargetPath $LogoutActionBatPath -Description 'Recall saved AV settings, then log out.' -IconLocation $LogoutIconLocation -WorkingDirectory $CtsFolder
