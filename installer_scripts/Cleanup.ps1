@@ -13,6 +13,9 @@ Param(
 # These shortcuts recall settings first.
 $addShortcuts = $true
 
+# Give the recall launcher a brief head start, but always continue with logout/reboot.
+$shortcutRecallGraceSeconds = 5
+
 # Workaround for passing in booleans from Python
 if ($standalone -eq "true") {
     $standalone = $true
@@ -24,6 +27,39 @@ else {
 Import-Module (Join-Path $PSScriptRoot 'shared\SharedHelpers.psm1') -Force
 
 $isLocal = Test-IsLocalComputer -ComputerName $PC
+
+function Set-ShortcutActionLauncher {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$LauncherPath,
+        [Parameter(Mandatory = $true)]
+        [string]$RecallBatPath,
+        [Parameter(Mandatory = $true)]
+        [string]$ShutdownCommand,
+        [Parameter(Mandatory = $true)]
+        [int]$GraceSeconds
+    )
+
+    $launcherContent = @(
+        '@echo off'
+        'setlocal'
+        ('set "RECALL_BAT={0}"' -f $RecallBatPath)
+        'if exist "%RECALL_BAT%" ('
+        '    start "" /min cmd.exe /c call "%RECALL_BAT%"'
+    )
+
+    if ($GraceSeconds -gt 0) {
+        $launcherContent += ('    timeout /t {0} /nobreak >nul' -f $GraceSeconds)
+    }
+
+    $launcherContent += @(
+        ')'
+        $ShutdownCommand
+        'endlocal'
+    )
+
+    $launcherContent | Set-Content -LiteralPath $LauncherPath -Force -Encoding ASCII
+}
 
 try {
     if ($standalone -and -not $isLocal) {
@@ -194,17 +230,8 @@ try {
         }
 
         $shutdownRecallBatContent | Set-Content -LiteralPath $programDataStartupBatPath -Force -Encoding ASCII
-        @(
-            '@echo off'
-            ('call "{0}"' -f $localProgramDataStartupBatPath)
-            'shutdown.exe /l'
-        ) | Set-Content -LiteralPath $logoutActionBatPath -Force -Encoding ASCII
-
-        @(
-            '@echo off'
-            ('call "{0}"' -f $localProgramDataStartupBatPath)
-            'shutdown.exe /r /t 1'
-        ) | Set-Content -LiteralPath $rebootActionBatPath -Force -Encoding ASCII
+        Set-ShortcutActionLauncher -LauncherPath $logoutActionBatPath -RecallBatPath $localProgramDataStartupBatPath -ShutdownCommand 'shutdown.exe /l' -GraceSeconds $shortcutRecallGraceSeconds
+        Set-ShortcutActionLauncher -LauncherPath $rebootActionBatPath -RecallBatPath $localProgramDataStartupBatPath -ShutdownCommand 'shutdown.exe /r /t 1' -GraceSeconds $shortcutRecallGraceSeconds
 
         Invoke-LocalOrRemote -ComputerName $PC -IsLocal $isLocal -ArgumentList @(
             $localPublicDesktopPath,
@@ -259,6 +286,24 @@ try {
                     [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
                 }
             }
+
+            function Remove-ExistingDesktopShortcuts {
+                param(
+                    [Parameter(Mandatory = $true)]
+                    [string]$DesktopPath
+                )
+
+                $shortcutBaseNames = @('Log Out', 'Logout', 'Reboot')
+                $existingShortcuts = Get-ChildItem -LiteralPath $DesktopPath -File -Filter '*.lnk' -ErrorAction SilentlyContinue |
+                Where-Object { $shortcutBaseNames -contains $_.BaseName }
+
+                foreach ($shortcut in $existingShortcuts) {
+                    Remove-Item -LiteralPath $shortcut.FullName -Force -ErrorAction SilentlyContinue
+                    Write-Output "INFO: Removed existing desktop shortcut at $($shortcut.FullName)"
+                }
+            }
+
+            Remove-ExistingDesktopShortcuts -DesktopPath $PublicDesktopPath
 
             $logoutShortcutPath = Join-Path $PublicDesktopPath 'Log Out.lnk'
             Set-DesktopShortcut -ShortcutPath $logoutShortcutPath -TargetPath $LogoutActionBatPath -Description 'Recall saved AV settings, then log out.' -IconLocation $LogoutIconLocation -WorkingDirectory $CtsFolder
