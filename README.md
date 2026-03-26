@@ -46,7 +46,7 @@ The deploy script processes multiple target PCs concurrently. For each target PC
 
 ### Usage
 
-0. Clone this repository to your admin workstation.
+0. Clone this repository to your admin workstation. The 'main' branch is the most up-to-date but may not always be fully tested, so you may wish to use a [release version](https://github.com/mefranklin6/Windows-Audio-and-Display-Baseline-Enforcer/releases). You can find a changelog at the end of this readme.
 1. Create `targets.txt` in the repository root (use `targets.txt.example` as a reference).
 2. Add one PC target per line in `targets.txt`.
 3. Edit the `pwsh_scripts` list in `00_remote_deploy.py` to include only what you want to deploy.
