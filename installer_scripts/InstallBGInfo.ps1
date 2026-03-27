@@ -5,6 +5,15 @@ Param(
     [string]$standalone = "true"
 )
 
+###############################################################################
+# Change this to what you name your folder in \BGInfo
+# Make sure you place the following:
+#    - The Latest BGInfo64.exe
+#    - Your .bg configuration file
+#    - Your base image file
+$bginfoFolder = "25_26" # Within \BGInfo. Ex: "25_26" if you have \BGInfo\25_26
+###############################################################################
+
 function Get-SingleMatchingFile {
     param(
         [Parameter(Mandatory = $true)]
@@ -42,15 +51,6 @@ else {
     $standalone = $false
 }
 
-
-###############################################################################
-# Change this to what you name your folder in \BGInfo
-# Make sure you place the following:
-#    - The Latest BGInfo64.exe
-#    - Your .bg configuration file
-#    - Your base image file
-$bginfoFolder = "25_26" # Within \BGInfo. Ex: "25_26" if you have \BGInfo\25_26
-###############################################################################
 
 
 Import-Module (Join-Path $PSScriptRoot 'shared\SharedHelpers.psm1') -Force
