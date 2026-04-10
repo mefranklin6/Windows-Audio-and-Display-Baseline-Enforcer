@@ -160,3 +160,11 @@ The startup script is fast and lightweight, but Windows may take several seconds
 
 - Added changelog
 - New feature: Add `Reboot` and `Log Out` shortcuts, which recall saved Audio and Display settings first.
+
+### v1.1.1
+
+10 April 2026
+
+- Bug fix: record null value for audio levels if device does not exist (like no recording device)
+- Harden: Elevate audio save script to admin if not already
+- Harden: audio level recall. Check if value is non-numeric first.
