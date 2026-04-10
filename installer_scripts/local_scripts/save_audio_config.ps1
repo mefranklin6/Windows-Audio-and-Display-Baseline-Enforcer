@@ -17,6 +17,7 @@ function Get-AudioDeviceValueOrNull {
         }
     }
     catch {
+        Write-Output "No value found for $expression"
     }
 
     return $null
