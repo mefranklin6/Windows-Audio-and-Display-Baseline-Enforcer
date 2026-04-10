@@ -114,8 +114,18 @@ function Restore-AudioLevels {
         if ($null -eq $rawValue) { continue }
 
         # Strip '%' and any whitespace, then convert to a rounded integer
-        $cleaned = ($rawValue -replace '[%\s]', '').Trim()
-        $parsed = [double]$cleaned
+        $cleaned = (($rawValue | Out-String) -replace '[%\s]', '').Trim()
+        if ([string]::IsNullOrWhiteSpace($cleaned)) {
+            Write-Log "Skipping $key because the saved value is empty or whitespace (raw='$rawValue')." "WARN"
+            continue
+        }
+
+        $parsed = 0.0
+        if (-not [double]::TryParse($cleaned, [ref]$parsed)) {
+            Write-Log "Skipping $key because the saved value is not numeric (raw='$rawValue')." "WARN"
+            continue
+        }
+
         $intValue = [int][Math]::Round($parsed)
 
         # Clamp to 0-100
