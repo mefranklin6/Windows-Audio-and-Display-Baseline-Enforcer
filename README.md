@@ -133,22 +133,18 @@ The `SAVE_AV_SETTINGS.bat` file is placed on the Public Desktop, requires admin 
 
 ## Notes
 
-The startup script is fast and lightweight, but Windows may take several seconds after login to execute Startup-folder items. Users may also briefly see a blank command prompt window (which is immediately minimized) before the saved settings are applied.
+- The startup script is fast and lightweight, but Windows may take several seconds after login to execute Startup-folder items. Users may also briefly see a blank command prompt window (which is immediately minimized) before the saved settings are applied.
+- It is best practice to hide the power options in the start menu and direct users to the `Reboot` and `Log Out` desktop shortcuts so AV settings are recalled at logout.
 
-## Changelog
+## Release Changelog
 
-### v1.0.0
+### v2.0.0
 
-26 March 2026
+4 May 2026
 
-- Initial feature-complete release
-
-### v1.1.0
-
-27 March 2026
-
-- Added changelog
-- New feature: Add `Reboot` and `Log Out` shortcuts, which recall saved Audio and Display settings first.
+- Backwards incompatible change: Move feature flags and script-specific params to the new `config.py`
+- Bump DisplayConfig version to 6.0.1
+- Modify `Reboot` and `Log Out` shortcuts to instantly display the user a message saying they will be logged out shortly.
 
 ### v1.1.1
 
@@ -157,3 +153,16 @@ The startup script is fast and lightweight, but Windows may take several seconds
 - Bug fix: record null value for audio levels if device does not exist (like no recording device)
 - Harden: Elevate audio save script to admin if not already
 - Harden: audio level recall. Check if value is non-numeric first.
+
+### v1.1.0
+
+27 March 2026
+
+- Added changelog
+- New feature: Add `Reboot` and `Log Out` shortcuts, which recall saved Audio and Display settings first.
+
+### v1.0.0
+
+26 March 2026
+
+- Initial feature-complete release
