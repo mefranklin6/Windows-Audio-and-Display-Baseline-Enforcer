@@ -1,0 +1,6 @@
+"""Configuration when using the Remote Deploy Script."""
+
+# Feature flags
+AUDIO_RECALL = True # Default True
+DISPLAY_RECALL = True # Default True
+BGINFO_INSTALL = False # Default False
