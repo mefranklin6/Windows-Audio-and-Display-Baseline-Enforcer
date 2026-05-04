@@ -13,7 +13,7 @@ else {
     $standalone = $false
 }
 
-$Version = '5.2.2'
+$Version = '6.0.1'
 
 Import-Module (Join-Path $PSScriptRoot 'shared\SharedHelpers.psm1') -Force
 
