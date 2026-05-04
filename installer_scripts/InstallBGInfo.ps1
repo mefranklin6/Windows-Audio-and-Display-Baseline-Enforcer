@@ -2,16 +2,17 @@ Param(
     [Parameter(Mandatory = $true)]
     [string]$PC,
     [Parameter(Mandatory = $false)]
-    [string]$standalone = "true"
+    [string]$standalone = "true",
+    [Parameter(Mandatory = $true)]
+    [string]$bginfoFolder
 )
 
 ###############################################################################
-# Change this to what you name your folder in \BGInfo
-# Make sure you place the following:
+# Parameter bginfoFolder: the name of your folder in \BGInfo
+# Make sure you place the following in that folder:
 #    - The Latest BGInfo64.exe
 #    - Your .bg configuration file
 #    - Your base image file
-$bginfoFolder = "25_26" # Within \BGInfo. Ex: "25_26" if you have \BGInfo\25_26
 ###############################################################################
 
 function Get-SingleMatchingFile {

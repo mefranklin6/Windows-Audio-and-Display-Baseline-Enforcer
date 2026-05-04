@@ -223,3 +223,4 @@ __marimo__/
 *.jpeg
 *.png
 *.bmp
+config.py

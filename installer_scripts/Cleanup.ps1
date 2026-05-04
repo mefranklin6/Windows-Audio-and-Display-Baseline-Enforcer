@@ -38,12 +38,21 @@ function Set-ShortcutActionLauncher {
         [Parameter(Mandatory = $true)]
         [string]$ShutdownCommand,
         [Parameter(Mandatory = $true)]
-        [int]$GraceSeconds
+        [int]$GraceSeconds,
+        [Parameter(Mandatory = $false)]
+        [string]$NotificationBody = ''
     )
 
     $launcherContent = @(
         '@echo off'
         'setlocal'
+    )
+
+    if ($NotificationBody -ne '') {
+        $launcherContent += ('start "" /b powershell.exe -WindowStyle Hidden -NonInteractive -ExecutionPolicy Bypass -File "C:\ProgramData\CTS\cts_notify.ps1" -Body "{0}"' -f $NotificationBody)
+    }
+
+    $launcherContent += @(
         ('set "RECALL_BAT={0}"' -f $RecallBatPath)
         'if exist "%RECALL_BAT%" ('
         '    start "" /min cmd.exe /c call "%RECALL_BAT%"'
@@ -233,8 +242,14 @@ try {
         }
 
         $shutdownRecallBatContent | Set-Content -LiteralPath $programDataStartupBatPath -Force -Encoding ASCII
-        Set-ShortcutActionLauncher -LauncherPath $logoutActionBatPath -RecallBatPath $localProgramDataStartupBatPath -ShutdownCommand 'shutdown.exe /l' -GraceSeconds $shortcutRecallGraceSeconds
-        Set-ShortcutActionLauncher -LauncherPath $rebootActionBatPath -RecallBatPath $localProgramDataStartupBatPath -ShutdownCommand 'shutdown.exe /r /t 1' -GraceSeconds $shortcutRecallGraceSeconds
+
+        $notifyScriptPath = Join-Path $ctsFolder 'cts_notify.ps1'
+        $notifyScriptSource = Join-Path $sourceScripts 'cts_notify.ps1'
+        Copy-Item -LiteralPath $notifyScriptSource -Destination $notifyScriptPath -Force
+        Write-Output "INFO: Copied notification helper to $notifyScriptPath"
+
+        Set-ShortcutActionLauncher -LauncherPath $logoutActionBatPath -RecallBatPath $localProgramDataStartupBatPath -ShutdownCommand 'shutdown.exe /l' -GraceSeconds $shortcutRecallGraceSeconds -NotificationBody 'You will be signed out shortly.'
+        Set-ShortcutActionLauncher -LauncherPath $rebootActionBatPath -RecallBatPath $localProgramDataStartupBatPath -ShutdownCommand 'shutdown.exe /r /t 1' -GraceSeconds $shortcutRecallGraceSeconds -NotificationBody 'You will be restarted shortly.'
 
         Invoke-LocalOrRemote -ComputerName $PC -IsLocal $isLocal -ArgumentList @(
             $localPublicDesktopPath,

@@ -49,18 +49,7 @@ The deploy script processes multiple target PCs concurrently. For each target PC
 0. Clone this repository to your admin workstation. The 'main' branch is the most up-to-date but may not always be fully tested, so you may wish to use a [release version](https://github.com/mefranklin6/Windows-Audio-and-Display-Baseline-Enforcer/releases). You can find a changelog at the end of this readme.
 1. Create `targets.txt` in the repository root (use `targets.txt.example` as a reference).
 2. Add one PC target per line in `targets.txt`.
-3. Edit the `pwsh_scripts` list in `00_remote_deploy.py` to include only what you want to deploy.
-
-    Example (BGInfo skipped):
-
-    ```python
-    pwsh_scripts = [
-        "installer_scripts\\./InstallAudioDeviceCmdlets.ps1",
-        "installer_scripts\\./InstallDisplayConfig.ps1",
-        # "installer_scripts\\./InstallBGInfo.ps1",
-        "installer_scripts\\./Cleanup.ps1",  # Cleanup must be last
-    ]
-    ```
+3. Create and configure `config.py` in the repository root. You can copy `config.py.example`.
 
 Run:
 
@@ -124,8 +113,8 @@ It performs the following:
 
 #### BGInfo Usage
 
-- Place the required BGInfo assets in `BGInfo\<folder>`, where `<folder>` matches the `$folder` value in `InstallBGInfo.ps1`.
-- That folder must contain exactly one `BGInfo64.exe`, exactly one `.bgi` file, and exactly one supported image file (`.jpg`, `.jpeg`, `.png`, `.bmp`, or `.gif`).
+- Place the required BGInfo assets in `BGInfo\<folder>`, where `<folder>` matches the `$folder` value in your `config.py`.
+- That folder must contain exactly one `BGInfo64.exe`, exactly one `.bgi` file, and exactly one supported image file (`.jpg`, `.jpeg`, `.png`, `.bmp`, or `.gif`). Note: you can keep multiple folders for different backgrounds and styles, but only what's specified in `config.py` will be deployed.
 - Include `InstallBGInfo.ps1` in `pwsh_scripts` only on systems where you want BGInfo applied at login.
 
 ### Cleanup Script
@@ -144,22 +133,18 @@ The `SAVE_AV_SETTINGS.bat` file is placed on the Public Desktop, requires admin 
 
 ## Notes
 
-The startup script is fast and lightweight, but Windows may take several seconds after login to execute Startup-folder items. Users may also briefly see a blank command prompt window (which is immediately minimized) before the saved settings are applied.
+- The startup script is fast and lightweight, but Windows may take several seconds after login to execute Startup-folder items. Users may also briefly see a blank command prompt window (which is immediately minimized) before the saved settings are applied.
+- It is best practice to hide the power options in the start menu and direct users to the `Reboot` and `Log Out` desktop shortcuts so AV settings are recalled at logout.
 
-## Changelog
+## Release Changelog
 
-### v1.0.0
+### v2.0.0
 
-26 March 2026
+4 May 2026
 
-- Initial feature-complete release
-
-### v1.1.0
-
-27 March 2026
-
-- Added changelog
-- New feature: Add `Reboot` and `Log Out` shortcuts, which recall saved Audio and Display settings first.
+- Backwards incompatible change: Move feature flags and script-specific params to the new `config.py`
+- Bump DisplayConfig version to 6.0.1
+- Modify `Reboot` and `Log Out` shortcuts to instantly display the user a message saying they will be logged out shortly.
 
 ### v1.1.1
 
@@ -168,3 +153,16 @@ The startup script is fast and lightweight, but Windows may take several seconds
 - Bug fix: record null value for audio levels if device does not exist (like no recording device)
 - Harden: Elevate audio save script to admin if not already
 - Harden: audio level recall. Check if value is non-numeric first.
+
+### v1.1.0
+
+27 March 2026
+
+- Added changelog
+- New feature: Add `Reboot` and `Log Out` shortcuts, which recall saved Audio and Display settings first.
+
+### v1.0.0
+
+26 March 2026
+
+- Initial feature-complete release

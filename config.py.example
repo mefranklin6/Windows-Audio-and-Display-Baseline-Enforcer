@@ -1,0 +1,15 @@
+"""Configuration when using the Remote Deploy Script."""
+
+## Feature flags ##
+AUDIO_RECALL = True  # Default True
+DISPLAY_RECALL = True  # Default True
+BGINFO_INSTALL = True  # Default True
+
+## BGInfo Config ##
+# Parameter bginfoFolder: the name of your folder in \BGInfo
+# Make sure you place the following in that folder:
+#    - The Latest BGInfo64.exe
+#    - Your .bg configuration file
+#    - Your base image file
+# Example: use "25_26" if you have this structure RepoRoot\BGInfo\25_26
+BGINFO_FOLDER = "25_26"
