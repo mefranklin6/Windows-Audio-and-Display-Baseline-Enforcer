@@ -1,14 +1,16 @@
-"""This script will cocurrently deploy all configuration scripts."""
+"""This script will conurrently deploy all configuration scripts."""
 
 from concurrent import futures
+from datetime import datetime
 import logging as log
 from pathlib import Path
 import re
 import subprocess
 import sys
-from datetime import datetime
 
-MAX_WORKERS = 10 # Concurrent PC's to install on. Default is 10
+import config
+
+MAX_WORKERS = 10  # Concurrent PC's to install on. Default is 10
 
 now = datetime.now()
 project_root = Path(__file__).parent
@@ -32,13 +34,14 @@ if not file_path.exists():
 with file_path.open("r") as f:
     TargetPCList = f.read().splitlines()
 
-
-pwsh_scripts = [
-    "installer_scripts\\./InstallAudioDeviceCmdlets.ps1",
-    "installer_scripts\\./InstallDisplayConfig.ps1",
-    # "installer_scripts\\./InstallBGInfo.ps1", # Optional, not part of settings recall
-    "installer_scripts\\./Cleanup.ps1",  # Cleanup must be last
-]
+# Do not modify. Set feature flags in config.py now. See config.py.example
+# {Installer Path (str) : Enabled (bool)}
+pwsh_scripts = {
+    "installer_scripts\\./InstallAudioDeviceCmdlets.ps1": config.AUDIO_RECALL,
+    "installer_scripts\\./InstallDisplayConfig.ps1": config.DISPLAY_RECALL,
+    "installer_scripts\\./InstallBGInfo.ps1": config.BGINFO_INSTALL,
+    "installer_scripts\\./Cleanup.ps1": True,  # Cleanup must be last
+}
 
 
 Executor = futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
@@ -63,7 +66,7 @@ def log_script_line(pc: str, script_name: str, line: str, default_level: str) ->
             message = parsed_line.group(2) or line
 
     formatted_message = f"{pc}: {script_name}: {message}"
-    print(formatted_message)
+    print(formatted_message)  # noqa: T201
 
     match level_name:
         case "DEBUG":
@@ -78,7 +81,9 @@ def log_script_line(pc: str, script_name: str, line: str, default_level: str) ->
             log.info(formatted_message)
 
 
-def log_process_output(pc: str, script_name: str, result: subprocess.CompletedProcess[str]) -> None:
+def log_process_output(
+    pc: str, script_name: str, result: subprocess.CompletedProcess[str]
+) -> None:
     """Write captured PowerShell output streams to the deployment log."""
 
     for stream_name, output in (("stdout", result.stdout), ("stderr", result.stderr)):
@@ -145,20 +150,43 @@ def RunCommand(pc: str) -> None:
     if not check_online(pc):
         return
 
-    for pwsh_script in pwsh_scripts:
-        log.info(f"{pc}: Running {pwsh_script}")
-        script_path = project_root / Path(pwsh_script)
-        result = subprocess.run(
-            ["powershell.exe", "-File", str(script_path), pc, "false"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        log_process_output(pc, pwsh_script, result)
-        if result.returncode == 0:
-            log.info(f"{pc}: Completed {pwsh_script}")
+    pwsh_script_items = pwsh_scripts.items()
+
+    for pwsh_script_tuple in pwsh_script_items:
+        script = pwsh_script_tuple[0]
+        enabled = pwsh_script_tuple[1]
+
+        if not enabled:
+            continue
+
+        log.info(f"{pc}: Running {script}")
+        script_path = project_root / Path(script)
+        if "bginfo" in script.lower():  # Handle extra param for this script
+            result = subprocess.run(
+                [
+                    "powershell.exe",
+                    "-File",
+                    str(script_path),
+                    pc,
+                    "false",
+                    config.BGINFO_FOLDER,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
         else:
-            log.error(f"{pc}: {pwsh_script} failed with exit code {result.returncode}")
+            result = subprocess.run(
+                ["powershell.exe", "-File", str(script_path), pc, "false"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        log_process_output(pc, script, result)
+        if result.returncode == 0:
+            log.info(f"{pc}: Completed {script}")
+        else:
+            log.error(f"{pc}: {script} failed with exit code {result.returncode}")
 
 
 if __name__ == "__main__":
