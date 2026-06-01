@@ -3,7 +3,7 @@
 ## Feature flags ##
 AUDIO_RECALL = True  # Default True
 DISPLAY_RECALL = True  # Default True
-BGINFO_INSTALL = True  # Default True
+BGINFO_INSTALL = True  # Default False, requires below configuration
 
 ## BGInfo Config ##
 # Parameter bginfoFolder: the name of your folder in \BGInfo
