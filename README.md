@@ -138,6 +138,13 @@ The `SAVE_AV_SETTINGS.bat` file is placed on the Public Desktop, requires admin 
 
 ## Release Changelog
 
+### v2.0.1
+
+1 June 2026
+
+- Bugfix error in BGInfo recall script
+- Change default value of BGINFO_INSTALL to False in config example and add context.
+
 ### v2.0.0
 
 4 May 2026
