@@ -122,7 +122,7 @@ try {
     $local_bat_path = Join-Path $prefix $local_bat_path_suffix
     $local_image_path = Join-Path $prefix $local_image_path_suffix
 
-    $bginfoArgs = "'C:\$local_config_path_suffix' /timer:0 /nolicprompt /silent" 
+        $bginfoArgs = '"C:\{0}" /timer:0 /nolicprompt /silent' -f $local_config_path_suffix
     $startupBatContent = @(
         '@echo off',
         ('start "" "{0}" {1}' -f "C:\$local_exe_path_suffix", $bginfoArgs)
