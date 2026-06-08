@@ -3,7 +3,8 @@
 ## Feature flags ##
 AUDIO_RECALL = True  # Default True
 DISPLAY_RECALL = True  # Default True
-BGINFO_INSTALL = True  # Default False, requires below configuration
+BGINFO_INSTALL = True  # Default False. Requires additional configuration.
+ADD_DESKTOP_SHORTCUTS = True # Default True
 
 ## BGInfo Config ##
 # Parameter bginfoFolder: the name of your folder in \BGInfo
@@ -12,4 +13,4 @@ BGINFO_INSTALL = True  # Default False, requires below configuration
 #    - Your .bg configuration file
 #    - Your base image file
 # Example: use "25_26" if you have this structure RepoRoot\BGInfo\25_26
-BGINFO_FOLDER = "25_26"
+BGINFO_FOLDER = "26_27"
