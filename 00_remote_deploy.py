@@ -36,11 +36,17 @@ with file_path.open("r") as f:
 
 # Do not modify. Set feature flags in config.py now. See config.py.example
 # {Installer Path (str) : Enabled (bool)}
+#
+# Ordering is important here:
+#     - First, we need the individual installers to run
+#     - Second, we need Cleanup to consilidate artifacts left by the installers
+#     - Finally, add_shortcuts relies on consolidation work of Cleanup, so it must be last
 pwsh_scripts = {
     "installer_scripts\\./InstallAudioDeviceCmdlets.ps1": config.AUDIO_RECALL,
     "installer_scripts\\./InstallDisplayConfig.ps1": config.DISPLAY_RECALL,
     "installer_scripts\\./InstallBGInfo.ps1": config.BGINFO_INSTALL,
-    "installer_scripts\\./Cleanup.ps1": True,  # Cleanup must be last
+    "installer_scripts\\./Cleanup.ps1": True,
+    "installer_scripts\\./add_shortcuts.ps1": config.ADD_DESKTOP_SHORTCUTS,
 }
 
 
