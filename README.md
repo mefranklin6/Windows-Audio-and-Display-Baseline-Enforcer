@@ -61,8 +61,6 @@ python .\00_remote_deploy.py
 #### Deployment Notes
 
 - Each line in `targets.txt` should contain one hostname.
-- Keep `Cleanup.ps1` last in the `pwsh_scripts` list.
-- Remove or comment out installers you do not want to ship in your environment.
 
 ## Individual Scripts
 
@@ -119,7 +117,7 @@ It performs the following:
 
 ### Cleanup Script
 
-If more than one script was executed per machine, make sure `Cleanup.ps1` runs last. This script consolidates installer artifacts into a single `SAVE_AV_SETTINGS.bat` file on the Public Desktop to save both audio and display settings, and creates one optimized startup script to recall saved settings in the proper order. This script will also apply your BGInfo settings if specified.
+If more than one script was executed per machine, make sure `Cleanup.ps1` runs after the installers. This script consolidates installer artifacts into a single `SAVE_AV_SETTINGS.bat` file on the Public Desktop to save both audio and display settings, and creates one optimized startup script to recall saved settings in the proper order. This script will also apply your BGInfo settings if specified.
 
 The `SAVE_AV_SETTINGS.bat` file is placed on the Public Desktop, requires admin rights, and self-destructs after running. For edits or reruns, a persistent copy is stored in `C:\ProgramData\CTS`.
 
@@ -128,8 +126,11 @@ The `SAVE_AV_SETTINGS.bat` file is placed on the Public Desktop, requires admin 
 - Consolidates separate startup launchers into one ordered startup batch file.
 - Preserves display recall before audio recall and BGInfo execution.
 - Removes the standalone `SAVE_AUDIO_SETTINGS.bat` desktop file when settings are consolidated into `SAVE_AV_SETTINGS.bat`.
-- Creates `Log Out` and  `Reboot` shortcuts on the Public Desktop, which recall the AV settings first.
 - Stores persistent recall-first launchers batch files and SAVE_AV_SETTINGS.bat in `C:\ProgramData\CTS`.
+
+### Shortcut Installer Script
+
+Adds `Log Out` and `Reboot` shortcuts to the public desktop, which recall proper AV settings before proceeding.
 
 ## Notes
 
@@ -137,6 +138,14 @@ The `SAVE_AV_SETTINGS.bat` file is placed on the Public Desktop, requires admin 
 - It is best practice to hide the power options in the start menu and direct users to the `Reboot` and `Log Out` desktop shortcuts so AV settings are recalled at logout.
 
 ## Release Changelog
+
+### v2.0.3
+
+8 June 2026
+
+- Add uninstaller utility script
+- Internal refactor: desktop shortcut creation is its' own script now.
+- Update the readme, including changes made previously
 
 ### v2.0.1
 
