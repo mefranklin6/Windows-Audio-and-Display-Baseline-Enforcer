@@ -142,8 +142,8 @@ try {
     $saveAvSettingsDesktopPath = Join-Path $publicDesktopPath $saveFile
     $saveAvSettingsBackupPath = Join-Path $ctsFolder $saveFile
 
-    Copy-Item $saveScriptSource $saveAvSettingsBackupPath
-    Copy-Item $saveScriptSource $saveAvSettingsDesktopPath
+    Copy-Item -LiteralPath $saveScriptSource -Destination $saveAvSettingsBackupPath -Force -ErrorAction Stop
+    Copy-Item -LiteralPath $saveScriptSource -Destination $saveAvSettingsDesktopPath -Force -ErrorAction Stop
 
     # Add self-destruct to desktop file
     Add-Content -LiteralPath $saveAvSettingsDesktopPath -Encoding ASCII -Value @(
