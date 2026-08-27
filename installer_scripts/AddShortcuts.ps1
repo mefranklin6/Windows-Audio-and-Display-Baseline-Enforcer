@@ -200,7 +200,7 @@ try {
                 [string]$DesktopPath
             )
 
-            $shortcutBaseNames = @('Log Out', 'Logout', 'Reboot')
+            $shortcutBaseNames = @('Log Out', 'Logout', 'Reboot', 'Restart')
             $existingShortcuts = Get-ChildItem -LiteralPath $DesktopPath -File -Filter '*.lnk' -ErrorAction SilentlyContinue |
             Where-Object { $shortcutBaseNames -contains $_.BaseName }
 
