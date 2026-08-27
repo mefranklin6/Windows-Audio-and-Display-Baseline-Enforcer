@@ -46,7 +46,7 @@ pwsh_scripts = {
     "installer_scripts\\./InstallDisplayConfig.ps1": config.DISPLAY_RECALL,
     "installer_scripts\\./InstallBGInfo.ps1": config.BGINFO_INSTALL,
     "installer_scripts\\./Cleanup.ps1": True,
-    "installer_scripts\\./add_shortcuts.ps1": config.ADD_DESKTOP_SHORTCUTS,
+    "installer_scripts\\./AddShortcuts.ps1": config.ADD_DESKTOP_SHORTCUTS,
 }
 
 
