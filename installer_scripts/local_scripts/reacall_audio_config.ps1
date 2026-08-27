@@ -145,6 +145,43 @@ function Restore-AudioLevels {
     }
 
     Write-Log "Done applying audio levels."
+
+    # Apply mute states after volume levels so the final mute state exactly
+    # matches the saved configuration. Older JSON files do not contain these
+    # properties and remain supported because missing values are skipped.
+    $muteParamMap = @{
+        'PlaybackMute'               = 'PlaybackMute'
+        'PlaybackCommunicationMute'  = 'PlaybackCommunicationMute'
+        'RecordingMute'              = 'RecordingMute'
+        'RecordingCommunicationMute' = 'RecordingCommunicationMute'
+    }
+
+    foreach ($key in $muteParamMap.Keys) {
+        $rawValue = $levels.$key
+        if ($null -eq $rawValue) { continue }
+
+        $muteValue = $false
+        if ($rawValue -is [bool]) {
+            $muteValue = [bool]$rawValue
+        }
+        elseif (-not [bool]::TryParse(([string]$rawValue).Trim(), [ref]$muteValue)) {
+            Write-Log "Skipping $key because the saved value is not Boolean (raw='$rawValue')." "WARN"
+            continue
+        }
+
+        $paramName = $muteParamMap[$key]
+        Write-Log "Setting $paramName -> $muteValue"
+
+        try {
+            $setArgs = @{ $paramName = $muteValue }
+            Set-AudioDevice @setArgs | Out-Null
+        }
+        catch {
+            Write-Log "Failed to set ${paramName}: $($_.Exception.Message)" "ERROR"
+        }
+    }
+
+    Write-Log "Done applying audio mute states."
 }
 
 function Restore-DefaultDevices {

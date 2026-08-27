@@ -73,7 +73,7 @@ Installs a custom fork of [AudioDeviceCmdlets](https://github.com/mefranklin6/Au
 It performs the following:
 
 1. Installs the fork of AudioDeviceCmdlets.
-2. Installs a local script to save audio settings (I/O devices, recording volume, playback volume).
+2. Installs a local script to save audio settings (I/O devices, recording/playback volume, and mute states).
 3. Installs a startup script that recalls saved settings at user login. If no settings are saved, no action is taken.
 4. Writes a log to `C:\ProgramData\CTS\AudioDeviceStartup.log`.
 

@@ -45,9 +45,13 @@ if (-not (Test-Path -LiteralPath $CtsFolder)) {
 Get-AudioDevice -List | ConvertTo-Json | Out-File -FilePath $DeviceListPath -Force
 
 $levels = [PSCustomObject]@{
+    PlaybackCommunicationMute    = Get-AudioDeviceValueOrNull { Get-AudioDevice -PlaybackCommunicationMute }
     PlaybackCommunicationVolume  = Get-AudioDeviceValueOrNull { Get-AudioDevice -PlaybackCommunicationVolume }
+    PlaybackMute                 = Get-AudioDeviceValueOrNull { Get-AudioDevice -PlaybackMute }
     PlaybackVolume               = Get-AudioDeviceValueOrNull { Get-AudioDevice -PlaybackVolume }
+    RecordingCommunicationMute   = Get-AudioDeviceValueOrNull { Get-AudioDevice -RecordingCommunicationMute }
     RecordingCommunicationVolume = Get-AudioDeviceValueOrNull { Get-AudioDevice -RecordingCommunicationVolume }
+    RecordingMute                = Get-AudioDeviceValueOrNull { Get-AudioDevice -RecordingMute }
     RecordingVolume              = Get-AudioDeviceValueOrNull { Get-AudioDevice -RecordingVolume }
 }
 
