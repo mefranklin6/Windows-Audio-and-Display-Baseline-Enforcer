@@ -281,8 +281,8 @@ try {
     $audioStartupBatSourcePath = Join-Path $sourceScripts 'run_recall_audio_config.bat'
     $audioStartupBatDestPath = Join-Path $startupFolder 'cts_audio_startup.bat'
 
-    Copy-Item -Path $audioRecallScriptSourcePath -Destination $audioRecallScriptDestPath -Force -ErrorAction Stop
-    Copy-Item -Path $audioStartupBatSourcePath -Destination $audioStartupBatDestPath -Force -ErrorAction Stop
+    Copy-ItemWithRetry -LiteralPath $audioRecallScriptSourcePath -Destination $audioRecallScriptDestPath
+    Copy-ItemWithRetry -LiteralPath $audioStartupBatSourcePath -Destination $audioStartupBatDestPath
 
     if (-not (Test-Path -LiteralPath $audioRecallScriptDestPath)) {
         throw "$PC recall_audio_config.ps1 not found at $audioRecallScriptDestPath"
@@ -298,8 +298,8 @@ try {
     $audioSaveBatSourcePath = Join-Path $sourceScripts 'run_save_audio_config.bat'
     $audioSaveBatDestPath = Join-Path $ctsFolder 'run_save_audio_config.bat'
 
-    Copy-Item -Path $audioSaveScriptSourcePath -Destination $audioSaveScriptDestPath -Force -ErrorAction Stop
-    Copy-Item -Path $audioSaveBatSourcePath -Destination $audioSaveBatDestPath -Force -ErrorAction Stop
+    Copy-ItemWithRetry -LiteralPath $audioSaveScriptSourcePath -Destination $audioSaveScriptDestPath
+    Copy-ItemWithRetry -LiteralPath $audioSaveBatSourcePath -Destination $audioSaveBatDestPath
 
     if (-not (Test-Path -LiteralPath $audioSaveScriptDestPath)) {
         throw "$PC save_audio_config.ps1 not found at $audioSaveScriptDestPath"
@@ -313,13 +313,11 @@ try {
         $publicDesktopPath = Join-Path $prefix 'Users\Public\Desktop'
         $saveAudioDesktopPath = Join-Path $publicDesktopPath 'SAVE_AUDIO_SETTINGS.bat'
 
-        Copy-Item -Path $saveAudioBatSourcePath -Destination $saveAudioDesktopPath -Force -ErrorAction Stop
-
-        # Add self-destruct to desktop file
-        Add-Content -LiteralPath $saveAudioDesktopPath -Encoding ASCII -Value @(
-            ''
-            '(goto) 2>nul & del "%~f0"'
-        )
+        # Write the final file once.  Reopening a just-copied file on an admin
+        # share can race SMB caching or endpoint protection.
+        $saveAudioBatContent = @(Get-Content -LiteralPath $saveAudioBatSourcePath -ErrorAction Stop)
+        $saveAudioBatContent += '', '(goto) 2>nul & del "%~f0"'
+        Set-ContentWithRetry -LiteralPath $saveAudioDesktopPath -Value $saveAudioBatContent
 
         Write-Output "INFO: Dropped SAVE_AUDIO_SETTINGS.bat on Public Desktop"
     }

@@ -116,7 +116,7 @@ try {
             $newContent += $bginfoLines
         }
 
-        $newContent | Set-Content -LiteralPath $consolidatedStartupBatPath -Force -Encoding ASCII
+        Set-ContentWithRetry -LiteralPath $consolidatedStartupBatPath -Value $newContent
         Write-Output "INFO: Wrote consolidated Startup bat to $consolidatedStartupBatPath"
 
         # Remove per-script bats so they don't also run at login.
@@ -142,14 +142,13 @@ try {
     $saveAvSettingsDesktopPath = Join-Path $publicDesktopPath $saveFile
     $saveAvSettingsBackupPath = Join-Path $ctsFolder $saveFile
 
-    Copy-Item -LiteralPath $saveScriptSource -Destination $saveAvSettingsBackupPath -Force -ErrorAction Stop
-    Copy-Item -LiteralPath $saveScriptSource -Destination $saveAvSettingsDesktopPath -Force -ErrorAction Stop
+    Copy-ItemWithRetry -LiteralPath $saveScriptSource -Destination $saveAvSettingsBackupPath
 
-    # Add self-destruct to desktop file
-    Add-Content -LiteralPath $saveAvSettingsDesktopPath -Encoding ASCII -Value @(
-        ''
-        '(goto) 2>nul & del "%~f0"'
-    )
+    # Write the final desktop file once to avoid a transient SMB/AV lock between
+    # Copy-Item and Add-Content.
+    $saveAvSettingsContent = @(Get-Content -LiteralPath $saveScriptSource -ErrorAction Stop)
+    $saveAvSettingsContent += '', '(goto) 2>nul & del "%~f0"'
+    Set-ContentWithRetry -LiteralPath $saveAvSettingsDesktopPath -Value $saveAvSettingsContent
 
     # Remove standalone SAVE_AUDIO_SETTINGS.bat left by AudioDeviceCmdlets installer
     $standaloneAudioSavePath = Join-Path $publicDesktopPath 'SAVE_AUDIO_SETTINGS.bat'
