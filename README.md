@@ -13,38 +13,41 @@ A deterministic audio and display baseline enforcement system for shared Windows
 This system is designed to keep audio and display configuration stable and predictable.
 
 - Prevent Windows from selecting the wrong audio devices or display configuration.
-- Prevent Windows from "guessing" or defaulting to last connected device/configuration state by deterministically recalling known-good settings at login.
+- Prevent Windows from "guessing" or defaulting to last connected device/configuration state by deterministically recalling known-good settings at login and logout.
 - Prevent AV configuration drift caused by Windows updates.
 - Allow users to temporarily make custom audio/display changes, then restore a standard configuration for the next user.
 
-Windows and users often change audio and display configuration in shared environments. This system restores a known-good baseline at login.
+Windows and users often change audio and display configuration in shared environments. This system restores a known-good baseline at login and logout.
 
 > Optional: This system can also deploy Sysinternals [BGInfo](https://learn.microsoft.com/en-us/sysinternals/downloads/bginfo) to write information over the desktop wallpaper at login. This is useful for showing who is logged in and for displaying asset or service tag information that helps users submit support tickets.
 
-## Usage and Requirements
+## Modular Architecture
 
-Both the deployment script and individual scripts can target local or remote PC's via WinRM. If you plan on deploying remotely, make sure your workstation has the proper permissions and WinRM is working:
+This system is modular, so you can choose which features and installers to deploy. You can either run scripts under `installer_scripts` directly, or use the recommended  `Deployment_Orchestrator.py` to install a selected set of scripts across multiple computers.
+
+## Usage
+
+Both the deployment orchestrator script and individual scripts can target local or remote PC's via WinRM. If you plan on deploying remotely, make sure your workstation has the proper permissions and WinRM is working:
 
 `Test-WSMan -ComputerName <name of a remote PC>`
 
-If you plan to run individual scripts directly, no additional setup is required. Run the PowerShell script you need from the `installer_scripts` folder. When prompted for a target PC, provide a remote hostname or `localhost`.
+### Individual Script Deployment Method
 
-If you plan to deploy to multiple PCs at once:
+This method is best used for testing or very small deployments. With this method, there is no additional setup or dependencies required. Simply run the PowerShell script you need from the `installer_scripts` folder. When prompted for a target PC, provide a remote hostname or `localhost` to install locally.
 
-- Install Python 3.14 or later on your workstation. This project currently uses only the standard library.
-- Follow the [Remote Deploy](#remote-deployment-script) instructions below.
+See [Individual Scripts](#individual-scripts) for details about what each script does.
+
+### Orchestrated Deployment Method (recommended)
+
+- Requires Python 3.14 or later on an administration workstation or server. This project currently uses only the standard library.
 
 If you plan to deploy BGInfo, place the latest `BGInfo64.exe`, one `.bgi` file, and one background image in the folder configured by `$folder` in `InstallBGInfo.ps1`. The script scans `BGInfo\<folder>` and requires exactly one match for each asset type.
 
-## Modular Architecture
-
-This system is modular, so you can choose which features and installers to deploy. You can either run scripts under `installer_scripts` directly, or use `00_remote_deploy.py` to install a selected set of scripts across multiple computers.
-
-## Remote Deployment Script
+## Deployment Orchestrator
 
 The deploy script processes multiple target PCs concurrently. For each target PC, it runs the selected installer scripts in the order listed in `pwsh_scripts`. For normal deployments, this is the only file you need to run.
 
-### Usage
+### Setup
 
 0. Clone this repository to your admin workstation. The 'main' branch is the most up-to-date but may not always be fully tested, so you may wish to use a [release version](https://github.com/mefranklin6/Windows-Audio-and-Display-Baseline-Enforcer/releases). You can find a changelog at the end of this readme.
 1. Create `targets.txt` in the repository root (use `targets.txt.example` as a reference).
@@ -55,7 +58,7 @@ Run:
 
 ```powershell
 cd <to your repo root>
-python .\00_remote_deploy.py
+python .\Deployment_Orchestrator.py
 ```
 
 #### Deployment Notes
@@ -130,7 +133,7 @@ The `SAVE_AV_SETTINGS.bat` file is placed on the Public Desktop, requires admin 
 
 ### Shortcut Installer Script
 
-Adds `Log Out` and `Reboot` shortcuts to the public desktop, which recall proper AV settings before proceeding.
+Adds `Log Out` and `Reboot` shortcuts to the public desktop, which recall proper AV settings before proceeding. These shortcuts requires all of the above scripts except the BGInfo script to already be installed.
 
 ## Notes
 
