@@ -61,6 +61,22 @@ cd <to your repo root>
 python .\Deployment_Orchestrator.py
 ```
 
+### Flutter GUI (optional)
+
+The Windows Flutter app in `deployment_orchestrator_app` exposes the same feature flags and BGInfo folder from `config.py`, plus the deployment worker limit. It can preview and edit `targets.txt`, or accept hostnames directly without changing that file. Feature settings selected in the GUI apply to that run only and leave `config.py` unchanged. The interface also includes light and dark themes, per-PC log filtering, detailed log viewing, targeted retries, and a Monitoring tab for auditing deployed CTS artifacts and PowerShell module versions.
+
+To run it with Flutter installed:
+
+```powershell
+cd .\deployment_orchestrator_app
+flutter pub get
+flutter run -d windows
+```
+
+See the [app README](deployment_orchestrator_app/README.md) for build and runtime details.
+
+The Python orchestrator also accepts these overrides directly. Run `python .\Deployment_Orchestrator.py --help` for the full list; repeat `--target HOSTNAME` to bypass `targets.txt` from the command line.
+
 #### Deployment Notes
 
 - Each line in `targets.txt` should contain one hostname.

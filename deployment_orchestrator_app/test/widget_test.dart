@@ -1,0 +1,189 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:deployment_orchestrator_app/main.dart';
+
+void main() {
+  testWidgets('shows deployment configuration controls', (tester) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const DeploymentOrchestratorApp());
+    await tester.pump();
+
+    expect(find.text('Deployment Orchestrator'), findsWidgets);
+    expect(find.byKey(const Key('audioRecallSwitch')), findsOneWidget);
+    expect(find.byKey(const Key('displayRecallSwitch')), findsOneWidget);
+    expect(find.byKey(const Key('bgInfoSwitch')), findsOneWidget);
+    expect(find.byKey(const Key('shortcutsSwitch')), findsOneWidget);
+    expect(find.byKey(const Key('deployButton')), findsOneWidget);
+    expect(find.byType(TabBar), findsOneWidget);
+    expect(find.text('Monitoring'), findsOneWidget);
+    expect(find.byKey(const Key('projectRootField')), findsNothing);
+    expect(find.byKey(const Key('bgInfoFolderField')), findsNothing);
+    expect(find.byKey(const Key('workersField')), findsNothing);
+    expect(find.byKey(const Key('outputText')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('settingsButton')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('projectRootField')), findsOneWidget);
+    expect(find.byKey(const Key('pythonField')), findsOneWidget);
+    expect(find.byKey(const Key('bgInfoFolderField')), findsOneWidget);
+    expect(find.byKey(const Key('workersField')), findsOneWidget);
+  });
+
+  testWidgets('shows the monitoring view', (tester) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const DeploymentOrchestratorApp());
+    await tester.pump();
+    await tester.tap(find.text('Monitoring'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('CTS deployment monitoring'), findsOneWidget);
+    expect(find.byKey(const Key('startMonitoringButton')), findsOneWidget);
+  });
+
+  testWidgets('toggles between light and dark themes', (tester) async {
+    await tester.pumpWidget(const DeploymentOrchestratorApp());
+    await tester.pump();
+
+    expect(
+      Theme.of(tester.element(find.byType(Scaffold))).brightness,
+      Brightness.dark,
+    );
+    await tester.tap(find.byKey(const Key('themeToggleButton')));
+    await tester.pumpAndSettle();
+    expect(
+      Theme.of(tester.element(find.byType(Scaffold))).brightness,
+      Brightness.light,
+    );
+  });
+
+  testWidgets('previews targets.txt with reload and save controls', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const DeploymentOrchestratorApp());
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('targetsFileEditor')), findsOneWidget);
+    expect(find.byKey(const Key('reloadTargetsButton')), findsOneWidget);
+    expect(find.byKey(const Key('saveTargetsButton')), findsOneWidget);
+  });
+
+  testWidgets('allows targets to be entered without targets.txt', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const DeploymentOrchestratorApp());
+    await tester.pump();
+    await tester.tap(find.text('Enter directly'));
+    await tester.pump();
+
+    final targetField = find.byKey(const Key('directTargetsField'));
+    expect(targetField, findsOneWidget);
+    await tester.enterText(targetField, 'PC-001\nPC-002');
+    expect(find.text('PC-001\nPC-002'), findsOneWidget);
+  });
+
+  test('colors severity words and makes fatal bold', () {
+    final spans = buildSeveritySpans(
+      'INFO ok WARNING careful ERROR failed FATAL stopped',
+    );
+    final info = spans.firstWhere((span) => span.text == 'INFO');
+    final warning = spans.firstWhere((span) => span.text == 'WARNING');
+    final error = spans.firstWhere((span) => span.text == 'ERROR');
+    final fatal = spans.firstWhere((span) => span.text == 'FATAL');
+
+    expect(info.style?.color, const Color(0xff22c55e));
+    expect(warning.style?.color, const Color(0xffff9800));
+    expect(error.style?.color, const Color(0xffef4444));
+    expect(fatal.style?.color, const Color(0xffef4444));
+    expect(fatal.style?.fontWeight, FontWeight.bold);
+  });
+
+  test('filters detailed logs by PC and finds matching PC choices', () {
+    const log = '''2026 INFO PC-001: Install complete
+2026 ERROR PC-002: Display driver failed
+2026 WARNING PC-001: Restart recommended''';
+
+    expect(
+      filterDetailedLog(log, selectedPc: 'PC-001'),
+      '''2026 INFO PC-001: Install complete
+2026 WARNING PC-001: Restart recommended''',
+    );
+    expect(filterPcChoices(['PC-001', 'PC-002', 'LAB-003'], 'pc-002'), [
+      'PC-002',
+    ]);
+  });
+
+  test('parses grouped per-PC deployment results', () {
+    final report = DeploymentReport.fromJson({
+      'log_file': r'C:\logs\deployment.log',
+      'pcs': [
+        {
+          'pc': 'PC-001',
+          'highest_severity': 'warning',
+          'issues': <Map<String, String>>[],
+          'scripts': [
+            {
+              'name': r'installer_scripts\Cleanup.ps1',
+              'severity': 'warning',
+              'messages': ['Restart recommended'],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(report.logFile, r'C:\logs\deployment.log');
+    expect(report.pcs.single.pc, 'PC-001');
+    expect(report.pcs.single.hasProblems, isTrue);
+    expect(report.pcs.single.scripts.single.severity, 'warning');
+    expect(report.pcs.single.scripts.single.messages, ['Restart recommended']);
+  });
+
+  test('parses monitoring results and BGInfo startup method', () {
+    final report = MonitoringReport.fromJson({
+      'log_file': r'C:\logs\monitor.log',
+      'pcs': [
+        {
+          'pc': 'PC-001',
+          'online': true,
+          'winrm': true,
+          'cts_deployed': true,
+          'audio_configured': false,
+          'display_configured': true,
+          'logout_shortcut': true,
+          'reboot_shortcut': true,
+          'bginfo_deployed': true,
+          'bginfo_executable': true,
+          'bginfo_profile': true,
+          'bginfo_background': true,
+          'bginfo_startup': true,
+          'bginfo_startup_method': 'av_config_recall.bat',
+          'audio_device_cmdlets_versions': ['3.2', '3.3'],
+          'display_config_versions': ['6.0.1'],
+        },
+      ],
+    });
+
+    expect(report.pcs.single.bgInfoStartupMethod, 'av_config_recall.bat');
+    expect(report.pcs.single.audioConfigured, isFalse);
+    expect(report.pcs.single.audioDeviceCmdletsVersions, ['3.2', '3.3']);
+  });
+}
