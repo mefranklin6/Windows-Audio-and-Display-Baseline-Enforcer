@@ -6,6 +6,7 @@ from datetime import datetime
 import json
 import logging as log
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -13,6 +14,7 @@ PROJECT_ROOT = Path(__file__).parent
 LOGS_DIR = PROJECT_ROOT / "logs"
 LOGS_DIR.mkdir(exist_ok=True)
 LOG_FILE = LOGS_DIR / f"monitor-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.log"
+DEPLOYMENT_RECORDS_DIR = LOGS_DIR / "deployment_records"
 log.basicConfig(
     level=log.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
@@ -72,7 +74,26 @@ def failed_result(pc: str, message: str) -> dict[str, object]:
         "bginfo_startup_method": "",
         "audio_device_cmdlets_versions": [],
         "display_config_versions": [],
+        "deployment_intent": load_deployment_intent(pc),
     }
+
+
+def deployment_record_path(pc: str) -> Path:
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", pc).strip("._") or "unknown"
+    return DEPLOYMENT_RECORDS_DIR / f"{safe_name.lower()}.json"
+
+
+def load_deployment_intent(pc: str) -> dict[str, object] | None:
+    """Load only the latest persisted deployment request for a target."""
+
+    record_path = deployment_record_path(pc)
+    try:
+        payload = json.loads(record_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
 
 
 def inspect_target(pc: str) -> dict[str, object]:
@@ -114,6 +135,8 @@ def inspect_target(pc: str) -> dict[str, object]:
         message = f"Invalid PowerShell monitoring result: {error}"
         log.error("%s: %s", pc, message)
         return failed_result(pc, message)
+
+    result["deployment_intent"] = load_deployment_intent(pc)
 
     status = "offline" if not result.get("online") else "complete"
     if result.get("online") and not result.get("winrm"):
