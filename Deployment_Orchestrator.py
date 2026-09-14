@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import threading
+import os
 
 import config
 
@@ -41,6 +42,7 @@ pwsh_scripts: dict[str, bool] = {}
 bginfo_folder = config.BGINFO_FOLDER
 
 SEVERITY_RANK = {"info": 0, "warning": 1, "error": 2, "fatal": 3}
+DEPLOYMENT_RECORDS_DIR = logs_dir / "deployment_records"
 
 
 @dataclass
@@ -408,6 +410,33 @@ def write_result_report(result_file: Path | None) -> None:
     log.info(f"Result report: {result_file.resolve()}")
 
 
+def deployment_record_path(pc: str) -> Path:
+    """Return a stable, filesystem-safe record path for one target."""
+
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", pc).strip("._") or "unknown"
+    return DEPLOYMENT_RECORDS_DIR / f"{safe_name.lower()}.json"
+
+
+def write_deployment_records(targets: list[str], args: argparse.Namespace) -> None:
+    """Persist the most recent requested feature set for every target."""
+
+    DEPLOYMENT_RECORDS_DIR.mkdir(parents=True, exist_ok=True)
+    recorded_at = datetime.now().astimezone().isoformat()
+    for pc in targets:
+        payload = {
+            "pc": pc,
+            "recorded_at": recorded_at,
+            "audio_recall": args.audio_recall,
+            "display_recall": args.display_recall,
+            "bginfo_install": args.bginfo_install,
+            "desktop_shortcuts": args.add_desktop_shortcuts,
+        }
+        record_path = deployment_record_path(pc)
+        temporary_path = record_path.with_suffix(f".{os.getpid()}.tmp")
+        temporary_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        temporary_path.replace(record_path)
+
+
 def main() -> int:
     """Run a complete deployment and return a process exit code."""
 
@@ -419,6 +448,10 @@ def main() -> int:
         return 1
 
     configure_run(args)
+    try:
+        write_deployment_records(targets, args)
+    except OSError as error:
+        log.warning("Could not save deployment records: %s", error)
     with result_lock:
         run_results.clear()
         run_results.update({pc: PcResult(pc=pc) for pc in targets})
