@@ -131,6 +131,41 @@ void main() {
     ]);
   });
 
+  test('fills in non-deployed script statuses', () {
+    final statuses = completeScriptStatusList(const [
+      ScriptDeploymentResult(
+        name: r'installer_scripts\Cleanup.ps1',
+        severity: 'info',
+        messages: [],
+      ),
+    ]);
+
+    expect(statuses, hasLength(allDeploymentScriptNames.length));
+    expect(
+      statuses
+          .firstWhere((script) => scriptFileName(script.name) == 'Cleanup.ps1')
+          .severity,
+      'info',
+    );
+    expect(
+      statuses
+          .firstWhere(
+            (script) => script.name == 'InstallAudioDeviceCmdlets.ps1',
+          )
+          .severity,
+      'not_deployed',
+    );
+  });
+
+  test('truncates displayed computer names to fifteen characters', () {
+    expect(truncateComputerName('PC-123'), 'PC-123');
+    expect(
+      truncateComputerName('COMPUTER-NAME-THAT-IS-LONG'),
+      'COMPUTER-NAM...',
+    );
+    expect(truncateComputerName('COMPUTER-NAM...'), hasLength(15));
+  });
+
   test('parses grouped per-PC deployment results', () {
     final report = DeploymentReport.fromJson({
       'log_file': r'C:\logs\deployment.log',
@@ -178,6 +213,13 @@ void main() {
           'bginfo_startup_method': 'av_config_recall.bat',
           'audio_device_cmdlets_versions': ['3.2', '3.3'],
           'display_config_versions': ['6.0.1'],
+          'deployment_intent': {
+            'recorded_at': '2026-09-14T10:00:00-07:00',
+            'audio_recall': false,
+            'display_recall': true,
+            'bginfo_install': false,
+            'desktop_shortcuts': false,
+          },
         },
       ],
     });
@@ -185,5 +227,7 @@ void main() {
     expect(report.pcs.single.bgInfoStartupMethod, 'av_config_recall.bat');
     expect(report.pcs.single.audioConfigured, isFalse);
     expect(report.pcs.single.audioDeviceCmdletsVersions, ['3.2', '3.3']);
+    expect(report.pcs.single.deploymentIntent?.audioRecall, isFalse);
+    expect(report.pcs.single.deploymentIntent?.displayRecall, isTrue);
   });
 }
