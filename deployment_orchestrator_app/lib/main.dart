@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'app_settings.dart';
 import 'native_orchestrator.dart';
 
 void main() {
@@ -11,6 +13,8 @@ void main() {
 }
 
 typedef DirectoryPicker = Future<String?> Function(String initialDirectory);
+typedef TargetFilePicker = Future<String?> Function(String initialDirectory);
+typedef TargetFileLoader = Future<String> Function(String path);
 typedef BgInfoAssetValidator = Future<BgInfoFolderValidation> Function(
   Directory folder,
 );
@@ -21,6 +25,76 @@ Future<String?> _pickDirectory(String initialDirectory) {
     confirmButtonText: 'Select BGInfo folder',
     canCreateDirectories: false,
   );
+}
+
+Future<String?> _pickTargetFile(String initialDirectory) async {
+  final file = await openFile(initialDirectory: initialDirectory);
+  return file?.path;
+}
+
+Future<String> _readTargetFile(String path) => File(path).readAsString();
+
+const targetFileHelp = '''Target file format:
+
+• Plain UTF-8 text
+• One computer hostname per line
+• Blank lines are allowed
+• Lines beginning with # are comments
+• Do not separate multiple computers with commas or semicolons
+
+Example:
+PC-001
+CLASSROOM-02
+# Temporarily excluded
+localhost''';
+
+class TargetFileValidation {
+  const TargetFileValidation({required this.targets, required this.errors});
+
+  final List<String> targets;
+  final List<String> errors;
+
+  bool get isValid => errors.isEmpty;
+}
+
+TargetFileValidation validateTargetFileContents(String contents) {
+  final targets = <String>[];
+  final errors = <String>[];
+  final seen = <String>{};
+  final lines = contents.split(RegExp(r'\r?\n'));
+  final validCharacters = RegExp(r'^[A-Za-z0-9_.-]+$');
+
+  for (var index = 0; index < lines.length; index++) {
+    final target = lines[index].replaceFirst('\uFEFF', '').trim();
+    if (target.isEmpty || target.startsWith('#')) continue;
+    final lineNumber = index + 1;
+    if (target.contains(',') || target.contains(';')) {
+      errors.add(
+        'Line $lineNumber contains multiple targets. Put each hostname on its own line.',
+      );
+      continue;
+    }
+    if (RegExp(r'\s').hasMatch(target)) {
+      errors.add('Line $lineNumber contains whitespace inside the hostname.');
+      continue;
+    }
+    if (!validCharacters.hasMatch(target)) {
+      errors.add(
+        'Line $lineNumber contains unsupported characters: “$target”. Use letters, numbers, hyphens, periods, or underscores.',
+      );
+      continue;
+    }
+    if (target.length > 253) {
+      errors.add('Line $lineNumber is longer than 253 characters.');
+      continue;
+    }
+    if (seen.add(target.toLowerCase())) targets.add(target);
+  }
+
+  if (targets.isEmpty && errors.isEmpty) {
+    errors.add('Add at least one computer hostname.');
+  }
+  return TargetFileValidation(targets: targets, errors: errors);
 }
 
 const bgInfoFolderHelp = '''BGInfo folder: the name of your folder in BGInfo.
@@ -207,12 +281,18 @@ ThemeData buildAppTheme(Brightness brightness, {bool highContrast = false}) {
 class DeploymentOrchestratorApp extends StatefulWidget {
   const DeploymentOrchestratorApp({
     this.directoryPicker,
+    this.targetFilePicker,
+    this.targetFileLoader,
     this.bgInfoAssetValidator,
+    this.settingsStore,
     super.key,
   });
 
   final DirectoryPicker? directoryPicker;
+  final TargetFilePicker? targetFilePicker;
+  final TargetFileLoader? targetFileLoader;
   final BgInfoAssetValidator? bgInfoAssetValidator;
+  final SettingsStore? settingsStore;
 
   @override
   State<DeploymentOrchestratorApp> createState() =>
@@ -221,6 +301,30 @@ class DeploymentOrchestratorApp extends StatefulWidget {
 
 class _DeploymentOrchestratorAppState extends State<DeploymentOrchestratorApp> {
   bool _darkMode = true;
+  bool _settingsLoaded = false;
+  Map<String, dynamic>? _initialSettings;
+  late final SettingsStore _settingsStore;
+
+  @override
+  void initState() {
+    super.initState();
+    _settingsStore = widget.settingsStore ?? JsonSettingsStore.forCurrentUser();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    final settings = await _settingsStore.load();
+    if (!mounted) return;
+    setState(() {
+      _initialSettings = settings;
+      _darkMode = settings?['dark_mode'] as bool? ?? true;
+      _settingsLoaded = true;
+    });
+  }
+
+  Future<void> _saveSettings(Map<String, dynamic> settings) async {
+    await _settingsStore.save(settings);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -232,13 +336,19 @@ class _DeploymentOrchestratorAppState extends State<DeploymentOrchestratorApp> {
       highContrastTheme: buildAppTheme(Brightness.light, highContrast: true),
       highContrastDarkTheme: buildAppTheme(Brightness.dark, highContrast: true),
       themeMode: _darkMode ? ThemeMode.dark : ThemeMode.light,
-      home: DeploymentPage(
-        darkMode: _darkMode,
-        directoryPicker: widget.directoryPicker ?? _pickDirectory,
-        bgInfoAssetValidator:
-            widget.bgInfoAssetValidator ?? validateBgInfoFolder,
-        onToggleTheme: () => setState(() => _darkMode = !_darkMode),
-      ),
+      home: _settingsLoaded
+          ? DeploymentPage(
+              darkMode: _darkMode,
+              directoryPicker: widget.directoryPicker ?? _pickDirectory,
+              targetFilePicker: widget.targetFilePicker ?? _pickTargetFile,
+              targetFileLoader: widget.targetFileLoader ?? _readTargetFile,
+              bgInfoAssetValidator:
+                  widget.bgInfoAssetValidator ?? validateBgInfoFolder,
+              initialSettings: _initialSettings,
+              onSettingsChanged: _saveSettings,
+              onToggleTheme: () => setState(() => _darkMode = !_darkMode),
+            )
+          : const Scaffold(body: Center(child: CircularProgressIndicator())),
     );
   }
 }
@@ -572,14 +682,22 @@ class DeploymentPage extends StatefulWidget {
   const DeploymentPage({
     required this.darkMode,
     required this.directoryPicker,
+    required this.targetFilePicker,
+    required this.targetFileLoader,
     required this.bgInfoAssetValidator,
+    required this.initialSettings,
+    required this.onSettingsChanged,
     required this.onToggleTheme,
     super.key,
   });
 
   final bool darkMode;
   final DirectoryPicker directoryPicker;
+  final TargetFilePicker targetFilePicker;
+  final TargetFileLoader targetFileLoader;
   final BgInfoAssetValidator bgInfoAssetValidator;
+  final Map<String, dynamic>? initialSettings;
+  final Future<void> Function(Map<String, dynamic>) onSettingsChanged;
   final VoidCallback onToggleTheme;
 
   @override
@@ -588,6 +706,7 @@ class DeploymentPage extends StatefulWidget {
 
 class _DeploymentPageState extends State<DeploymentPage> {
   late final TextEditingController _projectRootController;
+  late final TextEditingController _targetsFilePathController;
   final TextEditingController _targetsController = TextEditingController();
   final TextEditingController _targetsFileController = TextEditingController();
   final TextEditingController _bgInfoFolderController = TextEditingController();
@@ -622,23 +741,65 @@ class _DeploymentPageState extends State<DeploymentPage> {
   Set<String> _monitorCompletedTargets = const {};
   List<MonitoringPcResult> _monitorResults = const [];
   MonitoringFilter _monitorFilter = MonitoringFilter.all;
+  Timer? _settingsSaveTimer;
+  bool _restoreBgInfoInstall = false;
 
   bool get _controlsLocked => _isRunning || _isMonitoring;
 
   @override
   void initState() {
     super.initState();
-    _projectRootController = TextEditingController(text: _findProjectRoot());
+    final settings = widget.initialSettings;
+    final savedRoot = settings?['project_root'] as String?;
+    final projectRoot = savedRoot?.trim().isNotEmpty == true
+        ? savedRoot!.trim()
+        : _findProjectRoot();
+    _projectRootController = TextEditingController(text: projectRoot);
+    final savedTargetsFile = settings?['targets_file'] as String?;
+    _targetsFilePathController = TextEditingController(
+      text: savedTargetsFile?.trim().isNotEmpty == true
+          ? savedTargetsFile!.trim()
+          : _join(projectRoot, 'targets.txt'),
+    );
+    _targetsController.text = settings?['direct_targets'] as String? ?? '';
+    _bgInfoFolderController.text = settings?['bginfo_folder'] as String? ?? '';
+    final savedWorkers = settings?['max_workers'];
+    if (savedWorkers is int && savedWorkers > 0) {
+      _workersController.text = savedWorkers.toString();
+    } else if (savedWorkers is String && savedWorkers.trim().isNotEmpty) {
+      _workersController.text = savedWorkers;
+    }
+    _targetSource = settings?['target_source'] == TargetSource.direct.name
+        ? TargetSource.direct
+        : TargetSource.file;
+    _audioRecall = settings?['audio_recall'] as bool? ?? true;
+    _displayRecall = settings?['display_recall'] as bool? ?? true;
+    _addDesktopShortcuts = settings?['desktop_shortcuts'] as bool? ?? true;
+    _restoreBgInfoInstall = settings?['bginfo_install'] as bool? ?? false;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadTargetsFile(silent: true);
+      _restoreBgInfoSetting();
     });
+  }
+
+  Future<void> _restoreBgInfoSetting() async {
+    if (!_restoreBgInfoInstall || !mounted) return;
+    final valid = await _validateCurrentBgInfoFolder();
+    if (!mounted) return;
+    setState(() => _bgInfoInstall = valid);
+    if (!valid) _scheduleSettingsSave();
   }
 
   @override
   void dispose() {
+    if (_settingsSaveTimer?.isActive ?? false) {
+      _settingsSaveTimer!.cancel();
+      unawaited(widget.onSettingsChanged(_settingsPayload()));
+    }
     _deploymentOrchestrator?.cancel();
     _monitoringOrchestrator?.cancel();
     _projectRootController.dispose();
+    _targetsFilePathController.dispose();
     _targetsController.dispose();
     _targetsFileController.dispose();
     _bgInfoFolderController.dispose();
@@ -646,6 +807,35 @@ class _DeploymentPageState extends State<DeploymentPage> {
     _pageScrollController.dispose();
     _outputScrollController.dispose();
     super.dispose();
+  }
+
+  Map<String, dynamic> _settingsPayload() {
+    return {
+      'dark_mode': widget.darkMode,
+      'project_root': _projectRootController.text.trim(),
+      'target_source': _targetSource.name,
+      'targets_file': _targetsFilePathController.text.trim(),
+      'direct_targets': _targetsController.text,
+      'audio_recall': _audioRecall,
+      'display_recall': _displayRecall,
+      'bginfo_install': _bgInfoInstall,
+      'desktop_shortcuts': _addDesktopShortcuts,
+      'bginfo_folder': _bgInfoFolderController.text.trim(),
+      'max_workers': int.tryParse(_workersController.text.trim()) ?? 10,
+    };
+  }
+
+  void _scheduleSettingsSave() {
+    _settingsSaveTimer?.cancel();
+    _settingsSaveTimer = Timer(const Duration(milliseconds: 250), () async {
+      try {
+        await widget.onSettingsChanged(_settingsPayload());
+      } on FileSystemException catch (error) {
+        if (mounted) {
+          _showMessage('Could not save settings: ${error.message}');
+        }
+      }
+    });
   }
 
   String _findProjectRoot() {
@@ -702,6 +892,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
       return false;
     }
     setState(() => _bgInfoFolderController.text = folderName);
+    _scheduleSettingsSave();
     return true;
   }
 
@@ -747,6 +938,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
     );
     if (enableAfterSelection && selected == true && mounted) {
       setState(() => _bgInfoInstall = true);
+      _scheduleSettingsSave();
     }
   }
 
@@ -805,6 +997,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
   Future<void> _setBgInfoInstall(bool value) async {
     if (!value) {
       setState(() => _bgInfoInstall = false);
+      _scheduleSettingsSave();
       return;
     }
     if (_bgInfoFolderController.text.trim().isEmpty) {
@@ -813,20 +1006,39 @@ class _DeploymentPageState extends State<DeploymentPage> {
     }
     if (!await _validateCurrentBgInfoFolder()) return;
     setState(() => _bgInfoInstall = true);
+    _scheduleSettingsSave();
   }
 
   Future<void> _loadTargetsFile({bool silent = false}) async {
-    final targetsFile = File(
-      _join(_projectRootController.text.trim(), 'targets.txt'),
-    );
+    final targetsFile = _selectedTargetsFile;
     setState(() => _isUpdatingTargetsFile = true);
     try {
-      final contents = await targetsFile.readAsString();
+      final contents = await widget.targetFileLoader(targetsFile.path);
       if (!mounted) return;
       setState(() => _targetsFileController.text = contents);
-      if (!silent) _showMessage('Loaded targets.txt.');
-    } on FileSystemException {
-      if (!silent) _showMessage('Could not read ${targetsFile.path}.');
+      final validation = validateTargetFileContents(contents);
+      if (!validation.isValid && !silent) {
+        await _showTargetFileDialog(
+          errors: validation.errors,
+          path: targetsFile.path,
+        );
+      } else if (!silent) {
+        _showMessage('Loaded ${targetsFile.path}.');
+      }
+    } on FileSystemException catch (error) {
+      if (!silent) {
+        await _showTargetFileDialog(
+          errors: ['The file could not be read: ${error.message}'],
+          path: targetsFile.path,
+        );
+      }
+    } on FormatException {
+      if (!silent) {
+        await _showTargetFileDialog(
+          errors: const ['Save the file as UTF-8 plain text and try again.'],
+          path: targetsFile.path,
+        );
+      }
     } finally {
       if (mounted) setState(() => _isUpdatingTargetsFile = false);
     }
@@ -834,20 +1046,152 @@ class _DeploymentPageState extends State<DeploymentPage> {
 
   Future<void> _saveTargetsFile() async {
     FocusManager.instance.primaryFocus?.unfocus();
-    final targetsFile = File(
-      _join(_projectRootController.text.trim(), 'targets.txt'),
-    );
+    final validation = validateTargetFileContents(_targetsFileController.text);
+    if (!validation.isValid) {
+      await _showTargetFileDialog(
+        errors: validation.errors,
+        path: _selectedTargetsFile.path,
+      );
+      return;
+    }
+    final targetsFile = _selectedTargetsFile;
     setState(() => _isUpdatingTargetsFile = true);
     try {
       await targetsFile.writeAsString(_targetsFileController.text);
       if (!mounted) return;
-      _showMessage('Saved targets.txt.');
+      _showMessage('Saved ${targetsFile.path}.');
     } on FileSystemException catch (error) {
       if (!mounted) return;
-      _showMessage('Could not save targets.txt: ${error.message}');
+      _showMessage('Could not save target file: ${error.message}');
     } finally {
       if (mounted) setState(() => _isUpdatingTargetsFile = false);
     }
+  }
+
+  File get _selectedTargetsFile {
+    final path = _targetsFilePathController.text.trim();
+    return File(
+      path.isEmpty
+          ? _join(_projectRootController.text.trim(), 'targets.txt')
+          : path,
+    );
+  }
+
+  Future<void> _selectTargetsFile() async {
+    final currentFile = _selectedTargetsFile.absolute;
+    final initialDirectory = currentFile.parent.existsSync()
+        ? currentFile.parent.path
+        : _projectRootController.text.trim();
+    final selectedPath = await widget.targetFilePicker(initialDirectory);
+    if (selectedPath == null || selectedPath.trim().isEmpty || !mounted) return;
+
+    final file = File(selectedPath).absolute;
+    try {
+      final contents = await widget.targetFileLoader(file.path);
+      final validation = validateTargetFileContents(contents);
+      if (!validation.isValid) {
+        await _showTargetFileDialog(errors: validation.errors, path: file.path);
+        return;
+      }
+      if (!mounted) return;
+      setState(() {
+        _targetsFilePathController.text = file.path;
+        _targetsFileController.text = contents;
+        _targetSource = TargetSource.file;
+      });
+      _scheduleSettingsSave();
+    } on FileSystemException catch (error) {
+      if (mounted) {
+        await _showTargetFileDialog(
+          errors: ['The file could not be read: ${error.message}'],
+          path: file.path,
+        );
+      }
+    } on FormatException {
+      if (mounted) {
+        await _showTargetFileDialog(
+          errors: const ['Save the file as UTF-8 plain text and try again.'],
+          path: file.path,
+        );
+      }
+    }
+  }
+
+  Future<List<String>?> _loadValidatedTargets() async {
+    final file = _selectedTargetsFile;
+    try {
+      final contents = await widget.targetFileLoader(file.path);
+      final validation = validateTargetFileContents(contents);
+      if (!validation.isValid) {
+        await _showTargetFileDialog(errors: validation.errors, path: file.path);
+        return null;
+      }
+      return validation.targets;
+    } on FileSystemException catch (error) {
+      await _showTargetFileDialog(
+        errors: ['The file could not be read: ${error.message}'],
+        path: file.path,
+      );
+      return null;
+    } on FormatException {
+      await _showTargetFileDialog(
+        errors: const ['Save the file as UTF-8 plain text and try again.'],
+        path: file.path,
+      );
+      return null;
+    }
+  }
+
+  Future<void> _showTargetFileDialog({
+    List<String> errors = const [],
+    String? path,
+  }) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(errors.isEmpty ? Icons.help_outline : Icons.error_outline),
+            const SizedBox(width: 10),
+            Text(
+              errors.isEmpty
+                  ? 'Target file format'
+                  : 'Target file needs attention',
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: 520,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (path != null) ...[
+                  SelectableText(path),
+                  const SizedBox(height: 12),
+                ],
+                if (errors.isNotEmpty) ...[
+                  SelectableText(
+                    errors.map((error) => '• $error').join('\n'),
+                    key: const Key('targetFileValidationErrors'),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+                const SelectableText(targetFileHelp),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          FilledButton(
+            key: const Key('targetFileDialogCloseButton'),
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   List<String> _directTargets() {
@@ -1155,7 +1499,6 @@ class _DeploymentPageState extends State<DeploymentPage> {
     FocusManager.instance.primaryFocus?.unfocus();
     final root = _projectRootController.text.trim();
     final workers = int.tryParse(_workersController.text.trim());
-    final targetFile = File(_join(root, 'targets.txt'));
     final directTargets = _directTargets();
 
     if (!Directory(_join(root, 'installer_scripts')).existsSync()) {
@@ -1174,23 +1517,22 @@ class _DeploymentPageState extends State<DeploymentPage> {
       if (!await _validateCurrentBgInfoFolder()) return null;
     }
     if (targetsOverride == null &&
-        _targetSource == TargetSource.file &&
-        !targetFile.existsSync()) {
-      _showMessage('targets.txt was not found in the project root.');
-      return null;
-    }
-    if (targetsOverride == null &&
         _targetSource == TargetSource.direct &&
         directTargets.isEmpty) {
       _showMessage('Enter at least one target PC.');
       return null;
     }
 
-    final deploymentTargets =
-        targetsOverride ??
-        (_targetSource == TargetSource.direct
-            ? directTargets
-            : _parseTargetText(targetFile.readAsStringSync()));
+    List<String> deploymentTargets;
+    if (targetsOverride != null) {
+      deploymentTargets = targetsOverride;
+    } else if (_targetSource == TargetSource.direct) {
+      deploymentTargets = directTargets;
+    } else {
+      final fileTargets = await _loadValidatedTargets();
+      if (fileTargets == null) return null;
+      deploymentTargets = fileTargets;
+    }
     if (deploymentTargets.isEmpty) {
       _showMessage('No target PCs were provided.');
       return null;
@@ -1362,7 +1704,6 @@ class _DeploymentPageState extends State<DeploymentPage> {
     FocusManager.instance.primaryFocus?.unfocus();
     final root = _projectRootController.text.trim();
     final workers = int.tryParse(_workersController.text.trim());
-    final targetFile = File(_join(root, 'targets.txt'));
     final directTargets = _directTargets();
 
     if (!File(_join(root, 'utility_scripts\\MonitorTarget.ps1')).existsSync()) {
@@ -1373,18 +1714,19 @@ class _DeploymentPageState extends State<DeploymentPage> {
       _showMessage('Maximum workers must be a whole number of at least 1.');
       return;
     }
-    if (_targetSource == TargetSource.file && !targetFile.existsSync()) {
-      _showMessage('targets.txt was not found in the project root.');
-      return;
-    }
     if (_targetSource == TargetSource.direct && directTargets.isEmpty) {
       _showMessage('Enter at least one target PC.');
       return;
     }
 
-    final targets = _targetSource == TargetSource.direct
-        ? directTargets
-        : _parseTargetText(targetFile.readAsStringSync());
+    final List<String> targets;
+    if (_targetSource == TargetSource.direct) {
+      targets = directTargets;
+    } else {
+      final fileTargets = await _loadValidatedTargets();
+      if (fileTargets == null) return;
+      targets = fileTargets;
+    }
     if (targets.isEmpty) {
       _showMessage('No target PCs were provided.');
       return;
@@ -1643,7 +1985,10 @@ class _DeploymentPageState extends State<DeploymentPage> {
           ),
           IconButton(
             key: const Key('themeToggleButton'),
-            onPressed: widget.onToggleTheme,
+            onPressed: () {
+              widget.onToggleTheme();
+              _scheduleSettingsSave();
+            },
             tooltip: widget.darkMode
                 ? 'Switch to light mode'
                 : 'Switch to dark mode',
@@ -2406,12 +2751,46 @@ class _DeploymentPageState extends State<DeploymentPage> {
               key: const Key('projectRootField'),
               controller: _projectRootController,
               enabled: !_controlsLocked,
+              onChanged: (_) => _scheduleSettingsSave(),
               decoration: const InputDecoration(
                 labelText: 'Repository root',
                 hintText:
                     r'C:\path\to\Windows-Audio-and-Display-Baseline-Enforcer',
                 border: OutlineInputBorder(),
               ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: TextField(
+                    key: const Key('defaultTargetsFileField'),
+                    controller: _targetsFilePathController,
+                    enabled: !_controlsLocked,
+                    readOnly: true,
+                    onTap: _controlsLocked ? null : _selectTargetsFile,
+                    decoration: InputDecoration(
+                      labelText: 'Default target file',
+                      hintText: 'Select a plain-text target file',
+                      border: const OutlineInputBorder(),
+                      suffixIcon: IconButton(
+                        key: const Key('settingsTargetsFilePickerButton'),
+                        tooltip: 'Select target file',
+                        onPressed: _controlsLocked ? null : _selectTargetsFile,
+                        icon: const Icon(Icons.file_open_outlined),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  key: const Key('targetFileHelpButton'),
+                  tooltip: 'Target file format help',
+                  onPressed: _showTargetFileDialog,
+                  icon: const Icon(Icons.help_outline),
+                ),
+              ],
             ),
             const SizedBox(height: 16),
             Text(
@@ -2460,6 +2839,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
               controller: _workersController,
               enabled: !_controlsLocked,
               keyboardType: TextInputType.number,
+              onChanged: (_) => _scheduleSettingsSave(),
               decoration: const InputDecoration(
                 labelText: 'Maximum concurrent targets',
                 border: OutlineInputBorder(),
@@ -2490,7 +2870,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
                 ButtonSegment(
                   value: TargetSource.file,
                   icon: Icon(Icons.description_outlined),
-                  label: Text('targets.txt'),
+                  label: Text('From file'),
                 ),
                 ButtonSegment(
                   value: TargetSource.direct,
@@ -2503,6 +2883,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
                   ? null
                   : (selection) {
                       setState(() => _targetSource = selection.first);
+                      _scheduleSettingsSave();
                     },
             ),
             const SizedBox(height: 12),
@@ -2510,6 +2891,40 @@ class _DeploymentPageState extends State<DeploymentPage> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surfaceContainerHigh,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.description_outlined),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Tooltip(
+                            message: _selectedTargetsFile.path,
+                            child: Text(
+                              _selectedTargetsFile.path,
+                              key: const Key('selectedTargetsFilePath'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton.icon(
+                          key: const Key('chooseTargetsFileButton'),
+                          onPressed: _controlsLocked || _isUpdatingTargetsFile
+                              ? null
+                              : _selectTargetsFile,
+                          icon: const Icon(Icons.file_open_outlined),
+                          label: const Text('Choose file'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                   TextField(
                     key: const Key('targetsFileEditor'),
                     controller: _targetsFileController,
@@ -2517,7 +2932,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
                     minLines: 7,
                     maxLines: 12,
                     decoration: const InputDecoration(
-                      labelText: 'targets.txt preview and editor',
+                      labelText: 'Target file preview and editor',
                       hintText: 'PC-001\nPC-002\nlocalhost',
                       helperText:
                           'One hostname per line. Changes require Save.',
@@ -2555,6 +2970,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
                 key: const Key('directTargetsField'),
                 controller: _targetsController,
                 enabled: !_controlsLocked,
+                onChanged: (_) => _scheduleSettingsSave(),
                 minLines: 7,
                 maxLines: 12,
                 decoration: const InputDecoration(
@@ -2592,12 +3008,15 @@ class _DeploymentPageState extends State<DeploymentPage> {
               value: _audioRecall,
               onChanged: _controlsLocked
                   ? null
-                  : (value) => setState(() {
-                      _audioRecall = value;
-                      if (!value || !_displayRecall) {
-                        _addDesktopShortcuts = false;
-                      }
-                    }),
+                  : (value) {
+                      setState(() {
+                        _audioRecall = value;
+                        if (!value || !_displayRecall) {
+                          _addDesktopShortcuts = false;
+                        }
+                      });
+                      _scheduleSettingsSave();
+                    },
             ),
             SwitchListTile(
               key: const Key('displayRecallSwitch'),
@@ -2606,12 +3025,15 @@ class _DeploymentPageState extends State<DeploymentPage> {
               value: _displayRecall,
               onChanged: _controlsLocked
                   ? null
-                  : (value) => setState(() {
-                      _displayRecall = value;
-                      if (!_audioRecall || !value) {
-                        _addDesktopShortcuts = false;
-                      }
-                    }),
+                  : (value) {
+                      setState(() {
+                        _displayRecall = value;
+                        if (!_audioRecall || !value) {
+                          _addDesktopShortcuts = false;
+                        }
+                      });
+                      _scheduleSettingsSave();
+                    },
             ),
             SwitchListTile(
               key: const Key('bgInfoSwitch'),
@@ -2634,7 +3056,10 @@ class _DeploymentPageState extends State<DeploymentPage> {
                 value: shortcutsAvailable ? _addDesktopShortcuts : false,
                 onChanged: _controlsLocked || !shortcutsAvailable
                     ? null
-                    : (value) => setState(() => _addDesktopShortcuts = value),
+                    : (value) {
+                        setState(() => _addDesktopShortcuts = value);
+                        _scheduleSettingsSave();
+                      },
               ),
             ),
           ],

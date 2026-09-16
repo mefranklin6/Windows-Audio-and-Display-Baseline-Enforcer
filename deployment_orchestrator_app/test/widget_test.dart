@@ -4,7 +4,39 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:deployment_orchestrator_app/app_settings.dart';
 import 'package:deployment_orchestrator_app/main.dart';
+
+class MemorySettingsStore implements SettingsStore {
+  MemorySettingsStore([Map<String, dynamic>? initial])
+    : value = initial == null ? null : Map.of(initial);
+
+  Map<String, dynamic>? value;
+
+  @override
+  Future<Map<String, dynamic>?> load() async => value;
+
+  @override
+  Future<void> save(Map<String, dynamic> settings) async {
+    value = Map.of(settings);
+  }
+}
+
+DeploymentOrchestratorApp testApp({
+  DirectoryPicker? directoryPicker,
+  TargetFilePicker? targetFilePicker,
+  TargetFileLoader? targetFileLoader,
+  BgInfoAssetValidator? bgInfoAssetValidator,
+  SettingsStore? settingsStore,
+}) {
+  return DeploymentOrchestratorApp(
+    directoryPicker: directoryPicker,
+    targetFilePicker: targetFilePicker,
+    targetFileLoader: targetFileLoader ?? (_) async => 'PC-DEFAULT\n',
+    bgInfoAssetValidator: bgInfoAssetValidator,
+    settingsStore: settingsStore ?? MemorySettingsStore(),
+  );
+}
 
 void main() {
   testWidgets('shows deployment configuration controls', (tester) async {
@@ -13,7 +45,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(const DeploymentOrchestratorApp());
+    await tester.pumpWidget(testApp());
     await tester.pump();
 
     expect(find.text('Deployment Orchestrator'), findsWidgets);
@@ -38,6 +70,12 @@ void main() {
     expect(find.byKey(const Key('bgInfoFolderField')), findsOneWidget);
     expect(find.byKey(const Key('bgInfoFolderPickerButton')), findsOneWidget);
     expect(find.byKey(const Key('bgInfoHelpButton')), findsOneWidget);
+    expect(find.byKey(const Key('defaultTargetsFileField')), findsOneWidget);
+    expect(
+      find.byKey(const Key('settingsTargetsFilePickerButton')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('targetFileHelpButton')), findsOneWidget);
     expect(find.byKey(const Key('workersField')), findsOneWidget);
   });
 
@@ -49,7 +87,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(const DeploymentOrchestratorApp());
+    await tester.pumpWidget(testApp());
     await tester.pump();
 
     expect(
@@ -96,7 +134,7 @@ void main() {
     var pickerCalls = 0;
 
     await tester.pumpWidget(
-      DeploymentOrchestratorApp(
+      testApp(
         directoryPicker: (initialDirectory) async {
           pickerCalls++;
           return '$initialDirectory${Platform.pathSeparator}Classroom';
@@ -148,7 +186,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     await tester.pumpWidget(
-      DeploymentOrchestratorApp(
+      testApp(
         directoryPicker: (initialDirectory) async =>
             '$initialDirectory${Platform.pathSeparator}Auditorium',
         bgInfoAssetValidator: (_) async => const BgInfoFolderValidation.valid(),
@@ -178,7 +216,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     await tester.pumpWidget(
-      DeploymentOrchestratorApp(
+      testApp(
         directoryPicker: (initialDirectory) async =>
             '$initialDirectory${Platform.pathSeparator}Incomplete',
         bgInfoAssetValidator: (_) async => const BgInfoFolderValidation([
@@ -229,6 +267,160 @@ void main() {
     expect(duplicate.errors.single, contains('Keep only one .bgi file'));
   });
 
+  test('validates target files as one hostname per line', () {
+    final valid = validateTargetFileContents(
+      'PC-001\n# Maintenance group\nlocalhost\nPC-001\n',
+    );
+    expect(valid.isValid, isTrue);
+    expect(valid.targets, ['PC-001', 'localhost']);
+
+    final invalid = validateTargetFileContents('PC-001,PC-002\nbad target');
+    expect(invalid.isValid, isFalse);
+    expect(invalid.errors.first, contains('each hostname on its own line'));
+    expect(invalid.errors.last, contains('whitespace'));
+  });
+
+  testWidgets('selects and persists a valid target file', (tester) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final targetFilePath =
+        '${Directory.current.path}${Platform.pathSeparator}classrooms.list';
+    final settings = MemorySettingsStore();
+
+    await tester.pumpWidget(
+      testApp(
+        targetFilePicker: (_) async => targetFilePath,
+        targetFileLoader: (_) async => 'PC-001\nPC-002\n',
+        settingsStore: settings,
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('chooseTargetsFileButton')));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 50)),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text(File(targetFilePath).absolute.path), findsOneWidget);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('targetsFileEditor')))
+          .controller
+          ?.text,
+      'PC-001\nPC-002\n',
+    );
+    expect(settings.value?['targets_file'], File(targetFilePath).absolute.path);
+    expect(settings.value?['target_source'], 'file');
+  });
+
+  testWidgets('rejects an invalid selected target file with guidance', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final targetFilePath =
+        '${Directory.current.path}${Platform.pathSeparator}bad.csv';
+
+    await tester.pumpWidget(
+      testApp(
+        targetFilePicker: (_) async => targetFilePath,
+        targetFileLoader: (_) async => 'PC-001,PC-002',
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('chooseTargetsFileButton')));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 50)),
+    );
+    await tester.pump();
+
+    expect(find.text('Target file needs attention'), findsOneWidget);
+    expect(
+      find.textContaining('each hostname on its own line'),
+      findsOneWidget,
+    );
+    expect(find.text(File(targetFilePath).absolute.path), findsOneWidget);
+    expect(find.text(targetFileHelp), findsOneWidget);
+  });
+
+  testWidgets('restores and updates persisted settings', (tester) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final settings = MemorySettingsStore({
+      'dark_mode': false,
+      'project_root': r'C:\CTS',
+      'target_source': 'direct',
+      'targets_file': r'C:\Lists\rooms.txt',
+      'direct_targets': 'PC-SAVED',
+      'audio_recall': true,
+      'display_recall': true,
+      'bginfo_install': false,
+      'desktop_shortcuts': true,
+      'bginfo_folder': 'SavedAssets',
+      'max_workers': 4,
+    });
+
+    await tester.pumpWidget(testApp(settingsStore: settings));
+    await tester.pumpAndSettle();
+    expect(
+      Theme.of(tester.element(find.byType(Scaffold))).brightness,
+      Brightness.light,
+    );
+    expect(find.text('PC-SAVED'), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('directTargetsField')),
+      'PC-UPDATED',
+    );
+    await tester.tap(find.byKey(const Key('audioRecallSwitch')));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(settings.value?['direct_targets'], 'PC-UPDATED');
+    expect(settings.value?['audio_recall'], isFalse);
+    expect(settings.value?['targets_file'], r'C:\Lists\rooms.txt');
+
+    await tester.tap(find.byKey(const Key('settingsButton')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('workersField')))
+          .controller
+          ?.text,
+      '4',
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('bgInfoFolderField')))
+          .controller
+          ?.text,
+      'SavedAssets',
+    );
+  });
+
+  test('writes settings to disk as JSON', () async {
+    final folder = await Directory.systemTemp.createTemp('settings-store-');
+    addTearDown(() => folder.delete(recursive: true));
+    final store = JsonSettingsStore(
+      File('${folder.path}${Platform.pathSeparator}settings.json'),
+    );
+    final expected = <String, dynamic>{
+      'dark_mode': false,
+      'max_workers': 7,
+      'targets_file': r'C:\Lists\targets.txt',
+    };
+
+    await store.save(expected);
+
+    expect(await store.load(), expected);
+    expect(store.file.existsSync(), isTrue);
+  });
+
   testWidgets('shows monitoring in the unified operations view', (
     tester,
   ) async {
@@ -237,7 +429,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(const DeploymentOrchestratorApp());
+    await tester.pumpWidget(testApp());
     await tester.pump();
 
     expect(find.text('Operations'), findsOneWidget);
@@ -260,7 +452,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     final semanticsHandle = tester.ensureSemantics();
 
-    await tester.pumpWidget(const DeploymentOrchestratorApp());
+    await tester.pumpWidget(testApp());
     await tester.pump();
 
     final monitor = tester.getSemantics(
@@ -287,7 +479,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
 
-    await tester.pumpWidget(const DeploymentOrchestratorApp());
+    await tester.pumpWidget(testApp());
     await tester.pump();
 
     expect(tester.takeException(), isNull);
@@ -296,7 +488,7 @@ void main() {
   });
 
   testWidgets('toggles between light and dark themes', (tester) async {
-    await tester.pumpWidget(const DeploymentOrchestratorApp());
+    await tester.pumpWidget(testApp());
     await tester.pump();
 
     expect(
@@ -319,7 +511,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(const DeploymentOrchestratorApp());
+    await tester.pumpWidget(testApp());
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('targetsFileEditor')), findsOneWidget);
@@ -335,7 +527,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(const DeploymentOrchestratorApp());
+    await tester.pumpWidget(testApp());
     await tester.pump();
     await tester.tap(find.text('Enter directly'));
     await tester.pump();
