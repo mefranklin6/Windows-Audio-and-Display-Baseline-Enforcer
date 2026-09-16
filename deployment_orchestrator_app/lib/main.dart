@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import 'app_settings.dart';
 import 'native_orchestrator.dart';
+import 'update_checker.dart';
 
 void main() {
   runApp(const DeploymentOrchestratorApp());
@@ -710,6 +711,10 @@ class _DeploymentPageState extends State<DeploymentPage> {
   final TextEditingController _targetsController = TextEditingController();
   final TextEditingController _targetsFileController = TextEditingController();
   final TextEditingController _bgInfoFolderController = TextEditingController();
+  final TextEditingController _deploymentSearchController =
+      TextEditingController();
+  final TextEditingController _monitoringSearchController =
+      TextEditingController();
   final TextEditingController _workersController = TextEditingController(
     text: '10',
   );
@@ -726,6 +731,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
   bool _isUpdatingTargetsFile = false;
   bool _stopRequested = false;
   bool _monitorStopRequested = false;
+  bool _checkingForUpdates = false;
   NativeOrchestrator? _deploymentOrchestrator;
   NativeOrchestrator? _monitoringOrchestrator;
   String _output = '';
@@ -741,6 +747,8 @@ class _DeploymentPageState extends State<DeploymentPage> {
   Set<String> _monitorCompletedTargets = const {};
   List<MonitoringPcResult> _monitorResults = const [];
   MonitoringFilter _monitorFilter = MonitoringFilter.all;
+  String _deploymentSearch = '';
+  String _monitoringSearch = '';
   Timer? _settingsSaveTimer;
   bool _restoreBgInfoInstall = false;
 
@@ -803,6 +811,8 @@ class _DeploymentPageState extends State<DeploymentPage> {
     _targetsController.dispose();
     _targetsFileController.dispose();
     _bgInfoFolderController.dispose();
+    _deploymentSearchController.dispose();
+    _monitoringSearchController.dispose();
     _workersController.dispose();
     _pageScrollController.dispose();
     _outputScrollController.dispose();
@@ -863,6 +873,69 @@ class _DeploymentPageState extends State<DeploymentPage> {
 
   String _join(String parent, String child) =>
       '$parent${Platform.pathSeparator}$child';
+
+  Future<void> _checkForUpdates() async {
+    if (_checkingForUpdates) return;
+    setState(() => _checkingForUpdates = true);
+    try {
+      final update = await checkForUpdates();
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(
+                update.updateAvailable
+                    ? Icons.system_update_alt
+                    : Icons.check_circle_outline,
+              ),
+              const SizedBox(width: 10),
+              Text(
+                update.updateAvailable
+                    ? 'Update available'
+                    : 'You are up to date',
+              ),
+            ],
+          ),
+          content: Text(
+            update.updateAvailable
+                ? 'Version ${update.latestVersion} is available. You have version ${update.currentVersion}.'
+                : 'Version ${update.currentVersion} is the latest release.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Close'),
+            ),
+            if (update.updateAvailable)
+              FilledButton.icon(
+                onPressed: () async {
+                  Navigator.of(dialogContext).pop();
+                  try {
+                    await openWebUrl(update.preferredUrl);
+                  } on Object catch (error) {
+                    if (mounted) {
+                      _showMessage('Could not open the update: $error');
+                    }
+                  }
+                },
+                icon: const Icon(Icons.download_outlined),
+                label: Text(
+                  update.downloadUrl == null
+                      ? 'Open releases'
+                      : 'Download installer',
+                ),
+              ),
+          ],
+        ),
+      );
+    } on Object catch (error) {
+      if (mounted) _showMessage('Could not check for updates: $error');
+    } finally {
+      if (mounted) setState(() => _checkingForUpdates = false);
+    }
+  }
 
   Future<bool> _selectBgInfoFolder() async {
     final bgInfoRoot = Directory(
@@ -1977,6 +2050,17 @@ class _DeploymentPageState extends State<DeploymentPage> {
           ],
         ),
         actions: [
+          IconButton(
+            key: const Key('checkForUpdatesButton'),
+            onPressed: _checkingForUpdates ? null : _checkForUpdates,
+            tooltip: 'Check for updates (version $applicationVersion)',
+            icon: _checkingForUpdates
+                ? const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.system_update_outlined),
+          ),
           TextButton.icon(
             key: const Key('settingsButton'),
             onPressed: _controlsLocked ? null : _showSettingsDialog,
@@ -2111,6 +2195,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
   Widget _buildMonitoringResultsSection() {
     final filteredResults = _monitorResults
         .where((result) => _matchesMonitoringFilter(result, _monitorFilter))
+        .where((result) => _matchesPcSearch(result.pc, _monitoringSearch))
         .toList();
     return Card(
       child: Padding(
@@ -2141,6 +2226,14 @@ class _DeploymentPageState extends State<DeploymentPage> {
               const SizedBox(height: 16),
               const Divider(),
               const SizedBox(height: 8),
+              _buildPcSearchField(
+                key: const Key('monitoringPcSearchField'),
+                controller: _monitoringSearchController,
+                label: 'Find a monitored PC',
+                choices: _monitorResults.map((result) => result.pc),
+                onChanged: (value) => setState(() => _monitoringSearch = value),
+              ),
+              const SizedBox(height: 10),
               LayoutBuilder(
                 builder: (context, constraints) {
                   final dropdown = DropdownButtonFormField<MonitoringFilter>(
@@ -2225,7 +2318,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
                   child: Padding(
                     padding: EdgeInsets.all(20),
                     child: Center(
-                      child: Text('No PCs match this monitoring report.'),
+                      child: Text('No PCs match this report and search.'),
                     ),
                   ),
                 ),
@@ -2262,6 +2355,60 @@ class _DeploymentPageState extends State<DeploymentPage> {
           ],
         ),
       ),
+    );
+  }
+
+  bool _matchesPcSearch(String pc, String search) =>
+      pc.toLowerCase().contains(search.trim().toLowerCase());
+
+  Widget _buildPcSearchField({
+    required Key key,
+    required TextEditingController controller,
+    required String label,
+    required Iterable<String> choices,
+    required ValueChanged<String> onChanged,
+  }) {
+    return Autocomplete<String>(
+      initialValue: controller.value,
+      displayStringForOption: (pc) => pc,
+      optionsBuilder: (value) => filterPcChoices(choices, value.text),
+      onSelected: (pc) {
+        controller.value = TextEditingValue(
+          text: pc,
+          selection: TextSelection.collapsed(offset: pc.length),
+        );
+        onChanged(pc);
+      },
+      fieldViewBuilder: (context, fieldController, focusNode, onSubmitted) {
+        return TextField(
+          key: key,
+          controller: fieldController,
+          focusNode: focusNode,
+          decoration: InputDecoration(
+            labelText: label,
+            hintText: 'Start typing a PC name',
+            prefixIcon: const Icon(Icons.search),
+            suffixIcon: fieldController.text.isEmpty
+                ? null
+                : IconButton(
+                    tooltip: 'Clear PC search',
+                    onPressed: () {
+                      fieldController.clear();
+                      controller.clear();
+                      onChanged('');
+                      focusNode.requestFocus();
+                    },
+                    icon: const Icon(Icons.clear),
+                  ),
+            border: const OutlineInputBorder(),
+            isDense: true,
+          ),
+          onChanged: (value) {
+            controller.text = value;
+            onChanged(value);
+          },
+        );
+      },
     );
   }
 
@@ -2744,7 +2891,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
             _buildSectionHeading(
               icon: Icons.tune_rounded,
               title: 'Runtime',
-              description: 'Repository paths and deployment concurrency.',
+              description: 'Application files and deployment concurrency.',
             ),
             const SizedBox(height: 20),
             TextField(
@@ -2753,9 +2900,9 @@ class _DeploymentPageState extends State<DeploymentPage> {
               enabled: !_controlsLocked,
               onChanged: (_) => _scheduleSettingsSave(),
               decoration: const InputDecoration(
-                labelText: 'Repository root',
-                hintText:
-                    r'C:\path\to\Windows-Audio-and-Display-Baseline-Enforcer',
+                labelText: 'Application files',
+                hintText: r'C:\path\to\the installed application',
+                helperText: 'The installer configures this automatically. Change it only when running from source.',
                 border: OutlineInputBorder(),
               ),
             ),
@@ -3116,6 +3263,9 @@ class _DeploymentPageState extends State<DeploymentPage> {
         child: Text('Target progress will appear when deployment starts.'),
       );
     }
+    final visibleTargets = _knownTargets
+        .where((pc) => _matchesPcSearch(pc, _deploymentSearch))
+        .toList();
     final progress = _finishedTargets.length / _knownTargets.length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3134,6 +3284,21 @@ class _DeploymentPageState extends State<DeploymentPage> {
           key: const Key('overallProgressText'),
         ),
         const SizedBox(height: 12),
+        _buildPcSearchField(
+          key: const Key('deploymentPcSearchField'),
+          controller: _deploymentSearchController,
+          label: 'Find a deployed PC',
+          choices: _knownTargets,
+          onChanged: (value) => setState(() => _deploymentSearch = value),
+        ),
+        const SizedBox(height: 12),
+        if (visibleTargets.isEmpty)
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(20),
+              child: Center(child: Text('No deployed PCs match this search.')),
+            ),
+          ),
         LayoutBuilder(
           builder: (context, constraints) {
             const spacing = 10.0;
@@ -3142,7 +3307,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
               spacing: spacing,
               runSpacing: spacing,
               children: [
-                for (final pc in _knownTargets)
+                for (final pc in visibleTargets)
                   SizedBox(
                     width: itemWidth,
                     child: Builder(
