@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:deployment_orchestrator_app/main.dart';
@@ -19,8 +20,10 @@ void main() {
     expect(find.byKey(const Key('bgInfoSwitch')), findsOneWidget);
     expect(find.byKey(const Key('shortcutsSwitch')), findsOneWidget);
     expect(find.byKey(const Key('deployButton')), findsOneWidget);
-    expect(find.byType(TabBar), findsOneWidget);
-    expect(find.text('Monitoring'), findsOneWidget);
+    expect(find.byKey(const Key('startMonitoringButton')), findsOneWidget);
+    expect(find.byIcon(Icons.monitor_heart_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.rocket_launch_rounded), findsOneWidget);
+    expect(find.byType(TabBar), findsNothing);
     expect(find.byKey(const Key('projectRootField')), findsNothing);
     expect(find.byKey(const Key('bgInfoFolderField')), findsNothing);
     expect(find.byKey(const Key('workersField')), findsNothing);
@@ -34,7 +37,9 @@ void main() {
     expect(find.byKey(const Key('workersField')), findsOneWidget);
   });
 
-  testWidgets('shows the monitoring view', (tester) async {
+  testWidgets('shows monitoring in the unified operations view', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(1200, 1000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -42,11 +47,60 @@ void main() {
 
     await tester.pumpWidget(const DeploymentOrchestratorApp());
     await tester.pump();
-    await tester.tap(find.text('Monitoring'));
-    await tester.pumpAndSettle();
 
-    expect(find.text('CTS deployment monitoring'), findsOneWidget);
+    expect(find.text('Operations'), findsOneWidget);
+    expect(find.text('Monitoring results'), findsOneWidget);
+    expect(
+      find.text(
+        'Select the targets above, then choose Monitor to inspect them.',
+      ),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('startMonitoringButton')), findsOneWidget);
+  });
+
+  testWidgets('exposes primary actions to assistive technologies', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final semanticsHandle = tester.ensureSemantics();
+
+    await tester.pumpWidget(const DeploymentOrchestratorApp());
+    await tester.pump();
+
+    final monitor = tester.getSemantics(
+      find.byKey(const Key('startMonitoringButton')),
+    );
+    final deploy = tester.getSemantics(find.byKey(const Key('deployButton')));
+    final settings = tester.getSemantics(
+      find.byKey(const Key('settingsButton')),
+    );
+    expect(monitor.label, contains('Monitor'));
+    expect(monitor.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
+    expect(deploy.label, contains('Deploy'));
+    expect(deploy.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
+    expect(settings.label, contains('Settings'));
+    expect(settings.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
+    semanticsHandle.dispose();
+  });
+
+  testWidgets('remains usable at 200 percent text scaling', (tester) async {
+    tester.view.physicalSize = const Size(1400, 1100);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 2;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    await tester.pumpWidget(const DeploymentOrchestratorApp());
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const Key('startMonitoringButton')), findsOneWidget);
+    expect(find.byKey(const Key('deployButton')), findsOneWidget);
   });
 
   testWidgets('toggles between light and dark themes', (tester) async {

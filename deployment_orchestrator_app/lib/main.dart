@@ -9,6 +9,116 @@ void main() {
   runApp(const DeploymentOrchestratorApp());
 }
 
+ThemeData buildAppTheme(Brightness brightness, {bool highContrast = false}) {
+  final isDark = brightness == Brightness.dark;
+  final scheme = ColorScheme.fromSeed(
+    seedColor: isDark ? const Color(0xff8bb8e8) : const Color(0xff245b93),
+    brightness: brightness,
+    contrastLevel: highContrast ? 1 : 0.15,
+  );
+  final base = ThemeData(
+    brightness: brightness,
+    colorScheme: scheme,
+    useMaterial3: true,
+  );
+  final controlShape = RoundedRectangleBorder(
+    borderRadius: BorderRadius.circular(12),
+  );
+  return base.copyWith(
+    scaffoldBackgroundColor: scheme.surfaceContainerLowest,
+    focusColor: scheme.primary.withValues(alpha: 0.22),
+    hoverColor: scheme.primary.withValues(alpha: 0.08),
+    appBarTheme: AppBarTheme(
+      elevation: 0,
+      scrolledUnderElevation: 1,
+      centerTitle: false,
+      backgroundColor: scheme.surface,
+      foregroundColor: scheme.onSurface,
+      surfaceTintColor: scheme.surfaceTint,
+    ),
+    cardTheme: CardThemeData(
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      color: scheme.surfaceContainerLow,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(color: scheme.outlineVariant),
+      ),
+    ),
+    dialogTheme: DialogThemeData(
+      elevation: 8,
+      backgroundColor: scheme.surfaceContainerLow,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+    ),
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: scheme.outline),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: scheme.outlineVariant),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: scheme.primary, width: 2),
+      ),
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        minimumSize: const Size(0, 48),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        shape: controlShape,
+        textStyle: const TextStyle(fontWeight: FontWeight.w600),
+      ),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(0, 48),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        shape: controlShape,
+        side: BorderSide(color: scheme.outline),
+        textStyle: const TextStyle(fontWeight: FontWeight.w600),
+      ),
+    ),
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(
+        minimumSize: const Size(0, 44),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        shape: controlShape,
+        textStyle: const TextStyle(fontWeight: FontWeight.w600),
+      ),
+    ),
+    iconButtonTheme: IconButtonThemeData(
+      style: IconButton.styleFrom(
+        minimumSize: const Size.square(44),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    ),
+    dividerTheme: DividerThemeData(color: scheme.outlineVariant, space: 1),
+    snackBarTheme: SnackBarThemeData(
+      behavior: SnackBarBehavior.floating,
+      backgroundColor: scheme.inverseSurface,
+      contentTextStyle: TextStyle(color: scheme.onInverseSurface),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    ),
+    tooltipTheme: TooltipThemeData(
+      waitDuration: const Duration(milliseconds: 350),
+      showDuration: const Duration(seconds: 5),
+      decoration: BoxDecoration(
+        color: scheme.inverseSurface,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      textStyle: TextStyle(color: scheme.onInverseSurface),
+    ),
+  );
+}
+
 class DeploymentOrchestratorApp extends StatefulWidget {
   const DeploymentOrchestratorApp({super.key});
 
@@ -25,18 +135,10 @@ class _DeploymentOrchestratorAppState extends State<DeploymentOrchestratorApp> {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Deployment Orchestrator',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xff315c8c)),
-        useMaterial3: true,
-      ),
-      darkTheme: ThemeData(
-        brightness: Brightness.dark,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xff78a9dc),
-          brightness: Brightness.dark,
-        ),
-        useMaterial3: true,
-      ),
+      theme: buildAppTheme(Brightness.light),
+      darkTheme: buildAppTheme(Brightness.dark),
+      highContrastTheme: buildAppTheme(Brightness.light, highContrast: true),
+      highContrastDarkTheme: buildAppTheme(Brightness.dark, highContrast: true),
       themeMode: _darkMode ? ThemeMode.dark : ThemeMode.light,
       home: DeploymentPage(
         darkMode: _darkMode,
@@ -396,6 +498,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
   final TextEditingController _workersController = TextEditingController(
     text: '10',
   );
+  final ScrollController _pageScrollController = ScrollController();
   final ScrollController _outputScrollController = ScrollController();
 
   TargetSource _targetSource = TargetSource.file;
@@ -427,6 +530,8 @@ class _DeploymentPageState extends State<DeploymentPage> {
   List<MonitoringPcResult> _monitorResults = const [];
   MonitoringFilter _monitorFilter = MonitoringFilter.all;
 
+  bool get _controlsLocked => _isRunning || _isMonitoring;
+
   @override
   void initState() {
     super.initState();
@@ -449,6 +554,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
     _targetsFileController.dispose();
     _bgInfoFolderController.dispose();
     _workersController.dispose();
+    _pageScrollController.dispose();
     _outputScrollController.dispose();
     super.dispose();
   }
@@ -870,7 +976,13 @@ class _DeploymentPageState extends State<DeploymentPage> {
     });
   }
 
-  Future<DeploymentReport?> _startDeployment() async {
+  Future<DeploymentReport?> _startDeployment({
+    List<String>? targetsOverride,
+  }) async {
+    if (_controlsLocked) {
+      _showMessage('Wait for the current operation to finish.');
+      return null;
+    }
     FocusManager.instance.primaryFocus?.unfocus();
     final root = _projectRootController.text.trim();
     final python = _cleanExecutable(_pythonController.text);
@@ -897,18 +1009,24 @@ class _DeploymentPageState extends State<DeploymentPage> {
       _showMessage('Enter a BGInfo folder when BGInfo is enabled.');
       return null;
     }
-    if (_targetSource == TargetSource.file && !targetFile.existsSync()) {
+    if (targetsOverride == null &&
+        _targetSource == TargetSource.file &&
+        !targetFile.existsSync()) {
       _showMessage('targets.txt was not found in the project root.');
       return null;
     }
-    if (_targetSource == TargetSource.direct && directTargets.isEmpty) {
+    if (targetsOverride == null &&
+        _targetSource == TargetSource.direct &&
+        directTargets.isEmpty) {
       _showMessage('Enter at least one target PC.');
       return null;
     }
 
-    final deploymentTargets = _targetSource == TargetSource.direct
-        ? directTargets
-        : _parseTargetText(targetFile.readAsStringSync());
+    final deploymentTargets =
+        targetsOverride ??
+        (_targetSource == TargetSource.direct
+            ? directTargets
+            : _parseTargetText(targetFile.readAsStringSync()));
     if (deploymentTargets.isEmpty) {
       _showMessage('No target PCs were provided.');
       return null;
@@ -933,7 +1051,11 @@ class _DeploymentPageState extends State<DeploymentPage> {
       '--result-file',
       resultFile,
     ];
-    if (_targetSource == TargetSource.file) {
+    if (targetsOverride != null) {
+      for (final target in deploymentTargets) {
+        arguments.addAll(['--target', target]);
+      }
+    } else if (_targetSource == TargetSource.file) {
       arguments.addAll(['--targets-file', _join(root, 'targets.txt')]);
     } else {
       for (final target in directTargets) {
@@ -943,7 +1065,9 @@ class _DeploymentPageState extends State<DeploymentPage> {
 
     setState(() {
       _isRunning = true;
-      _status = 'Starting deployment…';
+      _status = targetsOverride == null
+          ? 'Starting deployment…'
+          : 'Starting filtered redeployment…';
       _detailedLogPath = null;
       _knownTargets = deploymentTargets;
       _pcProgress = {
@@ -965,7 +1089,12 @@ class _DeploymentPageState extends State<DeploymentPage> {
         process.kill();
         return null;
       }
-      setState(() => _status = 'Deploying (PID ${process.pid})');
+      setState(() {
+        _status = targetsOverride == null
+            ? 'Deploying (PID ${process.pid})'
+            : 'Redeploying ${deploymentTargets.length} selected PC(s) '
+                  '(PID ${process.pid})';
+      });
 
       _stdoutSubscription = process.stdout
           .transform(utf8.decoder)
@@ -1006,13 +1135,16 @@ class _DeploymentPageState extends State<DeploymentPage> {
           };
           _finishedTargets = report.pcs.map((result) => result.pc).toSet();
         }
+        final operationName = targetsOverride == null
+            ? 'Deployment'
+            : 'Filtered redeployment';
         _status = _stopRequested
-            ? 'Deployment stopped'
+            ? '$operationName stopped'
             : exitCode != 0
-            ? 'Deployment exited with code $exitCode'
+            ? '$operationName exited with code $exitCode'
             : reportHasProblems
-            ? 'Deployment finished with issues'
-            : 'Deployment finished successfully';
+            ? '$operationName finished with issues'
+            : '$operationName finished successfully';
       });
       if (!_stopRequested) {
         report ??= DeploymentReport(
@@ -1188,6 +1320,10 @@ class _DeploymentPageState extends State<DeploymentPage> {
   }
 
   Future<void> _startMonitoring() async {
+    if (_controlsLocked) {
+      _showMessage('Wait for the current operation to finish.');
+      return;
+    }
     FocusManager.instance.primaryFocus?.unfocus();
     final root = _projectRootController.text.trim();
     final python = _cleanExecutable(_pythonController.text);
@@ -1215,7 +1351,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
       return;
     }
     if (_targetSource == TargetSource.direct && directTargets.isEmpty) {
-      _showMessage('Enter at least one target PC on the Deployment tab.');
+      _showMessage('Enter at least one target PC.');
       return;
     }
 
@@ -1417,11 +1553,14 @@ class _DeploymentPageState extends State<DeploymentPage> {
   }
 
   Color _severityColor(String severity) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return switch (severity.toLowerCase()) {
-      'info' => const Color(0xff22c55e),
-      'warning' => const Color(0xffff9800),
-      'error' || 'fatal' => const Color(0xffef4444),
-      'not_deployed' => const Color(0xff94a3b8),
+      'info' => dark ? const Color(0xff6dd58c) : const Color(0xff146c2e),
+      'warning' => dark ? const Color(0xffffb95c) : const Color(0xff8a4a00),
+      'error' ||
+      'fatal' => dark ? const Color(0xffffb4ab) : const Color(0xffb3261e),
+      'not_deployed' =>
+        dark ? const Color(0xffc4c7c5) : const Color(0xff5f6368),
       _ => Theme.of(context).colorScheme.onSurfaceVariant,
     };
   }
@@ -1451,254 +1590,6 @@ class _DeploymentPageState extends State<DeploymentPage> {
     };
   }
 
-  Future<void> _showDeploymentSummary(DeploymentReport report) async {
-    if (!mounted) return;
-    final results = [...report.pcs];
-    var detailedLogPath = report.logFile;
-    final retryingPcs = <String>{};
-    final retryProgressByPc = <String, String>{};
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (dialogContext, setDialogState) {
-            final availableHeight =
-                MediaQuery.sizeOf(dialogContext).height - 180;
-            Future<void> retry(PcDeploymentResult result) async {
-              if (retryingPcs.contains(result.pc)) return;
-              setDialogState(() {
-                retryingPcs.add(result.pc);
-                retryProgressByPc[result.pc] = 'Starting retry…';
-              });
-              final retryReport = await _startPostDeploymentRetry(
-                target: result.pc,
-                refreshDeploymentArea: false,
-                onProgress: (line) {
-                  if (!dialogContext.mounted) return;
-                  setDialogState(() => retryProgressByPc[result.pc] = line);
-                },
-              );
-              if (!dialogContext.mounted) return;
-              PcDeploymentResult? replacement;
-              if (retryReport != null) {
-                for (final item in retryReport.pcs) {
-                  if (item.pc == result.pc) {
-                    replacement = item;
-                    break;
-                  }
-                }
-              }
-              setDialogState(() {
-                if (retryReport != null && retryReport.logFile.isNotEmpty) {
-                  detailedLogPath = retryReport.logFile;
-                }
-                results[results.indexWhere((item) => item.pc == result.pc)] =
-                    replacement ??
-                    PcDeploymentResult(
-                      pc: result.pc,
-                      highestSeverity: 'fatal',
-                      issues: const [
-                        DeploymentIssue(
-                          component: 'Orchestrator',
-                          severity: 'fatal',
-                          message: 'The retry did not return a result.',
-                        ),
-                      ],
-                      scripts: const [],
-                    );
-                retryingPcs.remove(result.pc);
-                retryProgressByPc.remove(result.pc);
-              });
-            }
-
-            return AlertDialog(
-              title: const Row(
-                children: [
-                  Icon(Icons.fact_check_outlined),
-                  SizedBox(width: 10),
-                  Text('Deployment results'),
-                ],
-              ),
-              content: SizedBox(
-                width: 720,
-                height: availableHeight.clamp(260, 650),
-                child: results.isEmpty
-                    ? const Center(child: Text('No PC results were returned.'))
-                    : ListView.separated(
-                        itemCount: results.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 10),
-                        itemBuilder: (_, index) => _buildPcResultCard(
-                          results[index],
-                          retrying: retryingPcs.contains(results[index].pc),
-                          retryEnabled: !retryingPcs.contains(
-                            results[index].pc,
-                          ),
-                          retryProgress:
-                              retryProgressByPc[results[index].pc] ?? '',
-                          onRetry: () => retry(results[index]),
-                        ),
-                      ),
-              ),
-              actions: [
-                if (detailedLogPath.isNotEmpty)
-                  TextButton.icon(
-                    key: const Key('summaryDetailedLogButton'),
-                    onPressed: () {
-                      _detailedLogPath = detailedLogPath;
-                      _showDetailedLogModal();
-                    },
-                    icon: const Icon(Icons.article_outlined),
-                    label: const Text('View detailed log'),
-                  ),
-                FilledButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Close'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Widget _buildPcResultCard(
-    PcDeploymentResult result, {
-    required bool retrying,
-    required bool retryEnabled,
-    required String retryProgress,
-    required VoidCallback onRetry,
-  }) {
-    if (!result.hasProblems) {
-      return Card(
-        color: const Color(0xff22c55e).withValues(alpha: 0.12),
-        child: ListTile(
-          leading: const Icon(Icons.check_circle, color: Color(0xff22c55e)),
-          title: Text(result.pc),
-          subtitle: const Text('Complete'),
-        ),
-      );
-    }
-
-    final severityColor = _severityColor(result.highestSeverity);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  _severityIcon(result.highestSeverity),
-                  color: severityColor,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    result.pc,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                ),
-                Text(
-                  _resultLabel(result.highestSeverity),
-                  style: TextStyle(
-                    color: severityColor,
-                    fontWeight: result.highestSeverity == 'fatal'
-                        ? FontWeight.bold
-                        : FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-            if (result.issues.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Text('Issues', style: Theme.of(context).textTheme.labelLarge),
-              for (final issue in result.issues)
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(
-                        _severityIcon(issue.severity),
-                        size: 18,
-                        color: _severityColor(issue.severity),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          '${issue.component}: ${issue.message}',
-                          style: TextStyle(
-                            fontWeight: issue.severity == 'fatal'
-                                ? FontWeight.bold
-                                : null,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-            ],
-            const SizedBox(height: 12),
-            Text('Scripts run', style: Theme.of(context).textTheme.labelLarge),
-            if (result.scripts.isEmpty)
-              const Padding(
-                padding: EdgeInsets.only(top: 6),
-                child: Text('No deployment scripts ran.'),
-              )
-            else
-              for (final script in result.scripts)
-                ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(
-                    _severityIcon(script.severity),
-                    color: _severityColor(script.severity),
-                  ),
-                  title: Text(_scriptDisplayName(script.name)),
-                  subtitle: script.messages.isEmpty
-                      ? null
-                      : Text(script.messages.join('\n')),
-                  trailing: Text(
-                    _resultLabel(script.severity),
-                    style: TextStyle(
-                      color: _severityColor(script.severity),
-                      fontWeight: script.severity == 'fatal'
-                          ? FontWeight.bold
-                          : FontWeight.w600,
-                    ),
-                  ),
-                ),
-            if (retrying) ...[
-              const SizedBox(height: 8),
-              const LinearProgressIndicator(),
-              const SizedBox(height: 8),
-              Text(
-                retryProgress,
-                key: Key('retryProgress-${result.pc}'),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
-            Align(
-              alignment: Alignment.centerRight,
-              child: OutlinedButton.icon(
-                key: Key('retryButton-${result.pc}'),
-                onPressed: retryEnabled ? onRetry : null,
-                icon: const Icon(Icons.refresh),
-                label: Text(
-                  retrying ? 'Retrying ${result.pc}' : 'Retry ${result.pc}',
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   void _showMessage(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
@@ -1708,247 +1599,338 @@ class _DeploymentPageState extends State<DeploymentPage> {
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Deployment Orchestrator'),
-          backgroundColor: Theme.of(context)
-              .colorScheme
-              .surfaceContainerHighest,
-          actions: [
-            TextButton.icon(
-              key: const Key('settingsButton'),
-              onPressed: _showSettingsDialog,
-              icon: const Icon(Icons.settings_outlined),
-              label: const Text('Settings'),
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    return Scaffold(
+      appBar: AppBar(
+        toolbarHeight: 72,
+        titleSpacing: 20,
+        title: Row(
+          children: [
+            ExcludeSemantics(
+              child: Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.hub_outlined,
+                  color: Theme.of(context).colorScheme.onPrimaryContainer,
+                ),
+              ),
             ),
-            IconButton(
-              key: const Key('themeToggleButton'),
-              onPressed: widget.onToggleTheme,
-              tooltip: widget.darkMode
-                  ? 'Switch to light mode'
-                  : 'Switch to dark mode',
-              icon: Icon(widget.darkMode ? Icons.light_mode : Icons.dark_mode),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Semantics(
+                    header: true,
+                    child: Text(
+                      'Deployment Orchestrator',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                  ),
+                  if (textScale <= 1.5)
+                    Text(
+                      'Deploy, monitor, and verify CTS endpoints',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                ],
+              ),
             ),
-            const SizedBox(width: 8),
           ],
-          bottom: const TabBar(
-            tabs: [
-              Tab(icon: Icon(Icons.rocket_launch_outlined), text: 'Deployment'),
-              Tab(icon: Icon(Icons.monitor_heart_outlined), text: 'Monitoring'),
-            ],
-          ),
         ),
-        body: SafeArea(
-          child: TabBarView(
-            children: [_buildDeploymentView(), _buildMonitoringView()],
+        actions: [
+          TextButton.icon(
+            key: const Key('settingsButton'),
+            onPressed: _controlsLocked ? null : _showSettingsDialog,
+            icon: const Icon(Icons.settings_outlined),
+            label: const Text('Settings'),
           ),
+          IconButton(
+            key: const Key('themeToggleButton'),
+            onPressed: widget.onToggleTheme,
+            tooltip: widget.darkMode
+                ? 'Switch to light mode'
+                : 'Switch to dark mode',
+            icon: Icon(widget.darkMode ? Icons.light_mode : Icons.dark_mode),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: SafeArea(
+        child: FocusTraversalGroup(
+          policy: ReadingOrderTraversalPolicy(),
+          child: _buildUnifiedView(),
         ),
       ),
     );
   }
 
-  Widget _buildDeploymentView() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1000),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final narrow = constraints.maxWidth < 760;
-                  final targetCard = _buildTargetsCard();
-                  final featureCard = _buildFeaturesCard();
-                  if (narrow) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        targetCard,
-                        const SizedBox(height: 16),
-                        featureCard,
-                      ],
-                    );
-                  }
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(child: targetCard),
-                      const SizedBox(width: 16),
-                      Expanded(child: featureCard),
-                    ],
-                  );
-                },
-              ),
-              const SizedBox(height: 16),
-              _buildRunCard(),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMonitoringView() {
-    final targetDescription = _targetSource == TargetSource.file
-        ? 'Using targets.txt'
-        : 'Using ${_directTargets().length} directly entered target(s)';
-    final filteredResults = _monitorResults
-        .where((result) => _matchesMonitoringFilter(result, _monitorFilter))
-        .toList();
-    final monitoringProgress = _monitorTargets.isEmpty
-        ? 0.0
-        : _monitorCompletedTargets.length / _monitorTargets.length;
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1000),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'CTS deployment monitoring',
-                                  style: Theme.of(context).textTheme.titleLarge,
-                                ),
-                                const SizedBox(height: 4),
-                                Text('$targetDescription · $_monitorStatus'),
-                              ],
-                            ),
-                          ),
-                          if (_isMonitoring)
-                            OutlinedButton.icon(
-                              key: const Key('stopMonitoringButton'),
-                              onPressed: _stopMonitoring,
-                              icon: const Icon(Icons.stop),
-                              label: const Text('Stop'),
-                            )
-                          else
-                            FilledButton.icon(
-                              key: const Key('startMonitoringButton'),
-                              onPressed: _isRunning ? null : _startMonitoring,
-                              icon: const Icon(Icons.refresh),
-                              label: const Text('Run monitoring'),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Target selection is shared with the Deployment tab. Monitoring runs read-only PowerShell checks on each PC.',
-                      ),
-                      if (_isMonitoring) ...[
-                        const SizedBox(height: 14),
-                        LinearProgressIndicator(value: monitoringProgress),
-                        const SizedBox(height: 8),
-                        Text(
-                          '${_monitorCompletedTargets.length} of ${_monitorTargets.length} targets inspected',
-                          key: const Key('monitoringProgressText'),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-              if (_monitorResults.isNotEmpty) ...[
-                const SizedBox(height: 16),
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Expanded(
-                          child: DropdownButtonFormField<MonitoringFilter>(
-                            key: const Key('monitoringReportFilter'),
-                            initialValue: _monitorFilter,
-                            decoration: const InputDecoration(
-                              labelText: 'Monitoring report',
-                              border: OutlineInputBorder(),
-                              isDense: true,
-                            ),
-                            items: [
-                              for (final filter in MonitoringFilter.values)
-                                DropdownMenuItem(
-                                  value: filter,
-                                  child: Text(_monitoringFilterLabel(filter)),
-                                ),
-                            ],
-                            onChanged: (filter) {
-                              if (filter != null) {
-                                setState(() => _monitorFilter = filter);
-                              }
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        OutlinedButton.icon(
-                          key: const Key('copyMonitoringReportButton'),
-                          onPressed: filteredResults.isEmpty
-                              ? null
-                              : () => _copyMonitoringReport(filteredResults),
-                          icon: const Icon(Icons.copy),
-                          label: const Text('Copy PC list'),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  '${_monitoringFilterLabel(_monitorFilter)} · ${filteredResults.length} PC(s)',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 10),
-                if (filteredResults.isEmpty)
-                  const Card(
-                    child: Padding(
-                      padding: EdgeInsets.all(20),
-                      child: Center(
-                        child: Text('No PCs match this monitoring report.'),
-                      ),
-                    ),
-                  ),
+  Widget _buildUnifiedView() {
+    return Scrollbar(
+      controller: _pageScrollController,
+      thumbVisibility: true,
+      child: SingleChildScrollView(
+        controller: _pageScrollController,
+        padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1120),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
                 LayoutBuilder(
                   builder: (context, constraints) {
-                    const spacing = 10.0;
-                    final itemWidth =
-                        (constraints.maxWidth - (spacing * 3)) / 4;
-                    return Wrap(
-                      spacing: spacing,
-                      runSpacing: spacing,
+                    final textScale = MediaQuery.textScalerOf(context).scale(1);
+                    final narrow =
+                        constraints.maxWidth < 760 * textScale.clamp(1, 1.5);
+                    final targetCard = _buildTargetsCard();
+                    final featureCard = _buildFeaturesCard();
+                    if (narrow) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          targetCard,
+                          const SizedBox(height: 16),
+                          featureCard,
+                        ],
+                      );
+                    }
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        for (final result in filteredResults)
-                          SizedBox(
-                            width: itemWidth,
-                            child: _buildMonitoringResultTile(result),
-                          ),
+                        Expanded(child: targetCard),
+                        const SizedBox(width: 16),
+                        Expanded(child: featureCard),
                       ],
                     );
                   },
                 ),
-              ] else if (!_isMonitoring) ...[
-                const SizedBox(height: 24),
-                const Center(
-                  child: Text('Run monitoring to inspect the selected PCs.'),
+                const SizedBox(height: 16),
+                _buildRunCard(),
+                const SizedBox(height: 16),
+                _buildMonitoringResultsSection(),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSectionHeading({
+    required IconData icon,
+    required String title,
+    String? description,
+  }) {
+    final colors = Theme.of(context).colorScheme;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ExcludeSemantics(
+          child: Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: colors.primaryContainer,
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: Icon(icon, size: 21, color: colors.onPrimaryContainer),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Semantics(
+                header: true,
+                child: Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+              ),
+              if (description != null) ...[
+                const SizedBox(height: 2),
+                Text(
+                  description,
+                  style: Theme.of(context).textTheme.bodyMedium
+                      ?.copyWith(color: colors.onSurfaceVariant),
                 ),
               ],
             ],
           ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMonitoringResultsSection() {
+    final filteredResults = _monitorResults
+        .where((result) => _matchesMonitoringFilter(result, _monitorFilter))
+        .toList();
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildSectionHeading(
+              icon: Icons.monitor_heart_outlined,
+              title: 'Monitoring results',
+              description: 'Read-only checks for CTS files, shortcuts, BGInfo, and installed PowerShell modules.',
+            ),
+            const SizedBox(height: 12),
+            Semantics(
+              container: true,
+              liveRegion: true,
+              label: 'Monitoring status: $_monitorStatus',
+              child: ExcludeSemantics(
+                child: Text(
+                  _monitorStatus,
+                  key: const Key('monitoringStatusText'),
+                  style: Theme.of(context).textTheme.labelLarge
+                      ?.copyWith(color: Theme.of(context).colorScheme.primary),
+                ),
+              ),
+            ),
+            if (_monitorResults.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              const Divider(),
+              const SizedBox(height: 8),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final dropdown = DropdownButtonFormField<MonitoringFilter>(
+                    key: const Key('monitoringReportFilter'),
+                    initialValue: _monitorFilter,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Monitoring report',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: [
+                      for (final filter in MonitoringFilter.values)
+                        DropdownMenuItem(
+                          value: filter,
+                          child: Text(_monitoringFilterLabelWithCount(filter)),
+                        ),
+                    ],
+                    onChanged: _controlsLocked
+                        ? null
+                        : (filter) {
+                            if (filter != null) {
+                              setState(() => _monitorFilter = filter);
+                            }
+                          },
+                  );
+                  final actions = Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        key: const Key('copyMonitoringReportButton'),
+                        onPressed: filteredResults.isEmpty
+                            ? null
+                            : () => _copyMonitoringReport(filteredResults),
+                        icon: const Icon(Icons.content_copy_rounded, size: 18),
+                        label: const Text('Copy PC list'),
+                      ),
+                      FilledButton.tonalIcon(
+                        key: const Key('redeployMonitoringReportButton'),
+                        onPressed: _controlsLocked || filteredResults.isEmpty
+                            ? null
+                            : () => _startDeployment(
+                                targetsOverride: filteredResults
+                                    .map((result) => result.pc)
+                                    .toList(),
+                              ),
+                        icon: const Icon(Icons.restart_alt_rounded, size: 20),
+                        label: const Text('Redeploy selected'),
+                      ),
+                    ],
+                  );
+                  final textScale = MediaQuery.textScalerOf(context).scale(1);
+                  if (constraints.maxWidth < 760 * textScale.clamp(1, 1.5)) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        dropdown,
+                        const SizedBox(height: 10),
+                        Align(alignment: Alignment.centerRight, child: actions),
+                      ],
+                    );
+                  }
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Expanded(child: dropdown),
+                      const SizedBox(width: 12),
+                      actions,
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 10),
+              Text(
+                '${_monitoringFilterLabel(_monitorFilter)} · ${filteredResults.length} PC(s)',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 10),
+              if (filteredResults.isEmpty)
+                const Card(
+                  child: Padding(
+                    padding: EdgeInsets.all(20),
+                    child: Center(
+                      child: Text('No PCs match this monitoring report.'),
+                    ),
+                  ),
+                ),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  const spacing = 10.0;
+                  final itemWidth = (constraints.maxWidth - (spacing * 3)) / 4;
+                  return Wrap(
+                    spacing: spacing,
+                    runSpacing: spacing,
+                    children: [
+                      for (final result in filteredResults)
+                        SizedBox(
+                          width: itemWidth,
+                          child: _buildMonitoringResultTile(result),
+                        ),
+                    ],
+                  );
+                },
+              ),
+            ] else if (!_isMonitoring) ...[
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Text(
+                  'Select the targets above, then choose Monitor to inspect them.',
+                ),
+              ),
+            ],
+          ],
         ),
       ),
     );
@@ -1974,6 +1956,13 @@ class _DeploymentPageState extends State<DeploymentPage> {
         'All PCs Missing AudioDeviceCmdlets',
       MonitoringFilter.missingDisplayConfig => 'All PCs Missing DisplayConfig',
     };
+  }
+
+  String _monitoringFilterLabelWithCount(MonitoringFilter filter) {
+    final count = _monitorResults
+        .where((result) => _matchesMonitoringFilter(result, filter))
+        .length;
+    return '${_monitoringFilterLabel(filter)} ($count)';
   }
 
   bool _matchesMonitoringFilter(
@@ -2087,15 +2076,15 @@ class _DeploymentPageState extends State<DeploymentPage> {
     final IconData overallIcon;
     final String overallLabel;
     if (!result.online) {
-      overallColor = const Color(0xff3b82f6);
+      overallColor = _pcProgressColor(PcProgress.offline);
       overallIcon = Icons.cloud_off;
       overallLabel = 'Offline';
     } else if (!result.winRm) {
-      overallColor = const Color(0xffef4444);
+      overallColor = _pcProgressColor(PcProgress.error);
       overallIcon = Icons.error;
       overallLabel = 'WinRM unavailable';
     } else if (!result.ctsDeployed) {
-      overallColor = const Color(0xffff9800);
+      overallColor = _pcProgressColor(PcProgress.warning);
       overallIcon = Icons.warning_amber_rounded;
       overallLabel = 'Missing deployment';
     } else {
@@ -2103,53 +2092,65 @@ class _DeploymentPageState extends State<DeploymentPage> {
         result,
         MonitoringFilter.failedChecks,
       );
-      overallColor = fullyConfigured
-          ? const Color(0xff22c55e)
-          : const Color(0xffff9800);
+      overallColor = _pcProgressColor(
+        fullyConfigured ? PcProgress.complete : PcProgress.warning,
+      );
       overallIcon = fullyConfigured
           ? Icons.check_circle
           : Icons.warning_amber_rounded;
       overallLabel = fullyConfigured ? 'Healthy' : 'Attention needed';
     }
 
-    return Card(
-      key: Key('monitorResult-${result.pc}'),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () => _showMonitoringDetails(result),
-        child: SizedBox(
-          height: 78,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: Row(
-              children: [
-                Icon(overallIcon, color: overallColor, size: 22),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Tooltip(
-                    message: result.pc,
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          truncateComputerName(result.pc),
-                          maxLines: 1,
-                          overflow: TextOverflow.clip,
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                        Text(
-                          overallLabel,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: overallColor, fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  ),
+    return Semantics(
+      button: true,
+      label: '${result.pc}. Monitoring status: $overallLabel. Open details.',
+      child: ExcludeSemantics(
+        child: Card(
+          key: Key('monitorResult-${result.pc}'),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () => _showMonitoringDetails(result),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 84),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 12,
                 ),
-                const Icon(Icons.open_in_new, size: 16),
-              ],
+                child: Row(
+                  children: [
+                    Icon(overallIcon, color: overallColor, size: 22),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Tooltip(
+                        message: result.pc,
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              truncateComputerName(result.pc),
+                              maxLines: 1,
+                              overflow: TextOverflow.clip,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            Text(
+                              overallLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.labelMedium
+                                  ?.copyWith(color: overallColor),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const Icon(Icons.chevron_right_rounded, size: 20),
+                  ],
+                ),
+              ),
             ),
           ),
         ),
@@ -2348,11 +2349,16 @@ class _DeploymentPageState extends State<DeploymentPage> {
   }
 
   Color _monitoringStatusColor(MonitoringComponentStatus status) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return switch (status) {
-      MonitoringComponentStatus.present => const Color(0xff22c55e),
-      MonitoringComponentStatus.missing => const Color(0xffef4444),
-      MonitoringComponentStatus.notDeployed => const Color(0xff94a3b8),
-      MonitoringComponentStatus.unknown => const Color(0xff3b82f6),
+      MonitoringComponentStatus.present =>
+        dark ? const Color(0xff6dd58c) : const Color(0xff146c2e),
+      MonitoringComponentStatus.missing =>
+        dark ? const Color(0xffffb4ab) : const Color(0xffb3261e),
+      MonitoringComponentStatus.notDeployed =>
+        dark ? const Color(0xffc4c7c5) : const Color(0xff5f6368),
+      MonitoringComponentStatus.unknown =>
+        dark ? const Color(0xffa8c7fa) : const Color(0xff0b57d0),
     };
   }
 
@@ -2402,16 +2408,20 @@ class _DeploymentPageState extends State<DeploymentPage> {
   Widget _buildRuntimeCard() {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Runtime', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 12),
+            _buildSectionHeading(
+              icon: Icons.tune_rounded,
+              title: 'Runtime',
+              description: 'Repository paths and deployment concurrency.',
+            ),
+            const SizedBox(height: 20),
             TextField(
               key: const Key('projectRootField'),
               controller: _projectRootController,
-              enabled: !_isRunning,
+              enabled: !_controlsLocked,
               decoration: const InputDecoration(
                 labelText: 'Repository root',
                 hintText:
@@ -2427,7 +2437,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
                   child: TextField(
                     key: const Key('pythonField'),
                     controller: _pythonController,
-                    enabled: !_isRunning,
+                    enabled: !_controlsLocked,
                     decoration: const InputDecoration(
                       labelText: 'Python command',
                       hintText: 'python',
@@ -2438,7 +2448,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
                 const SizedBox(width: 12),
                 OutlinedButton.icon(
                   key: const Key('loadConfigButton'),
-                  onPressed: _isRunning ? null : _loadConfig,
+                  onPressed: _controlsLocked ? null : _loadConfig,
                   icon: const Icon(Icons.refresh),
                   label: const Text('Load config.py'),
                 ),
@@ -2453,7 +2463,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
             TextField(
               key: const Key('bgInfoFolderField'),
               controller: _bgInfoFolderController,
-              enabled: !_isRunning,
+              enabled: !_controlsLocked,
               decoration: const InputDecoration(
                 labelText: 'BGInfo folder',
                 hintText: '25_26',
@@ -2465,7 +2475,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
             TextField(
               key: const Key('workersField'),
               controller: _workersController,
-              enabled: !_isRunning,
+              enabled: !_controlsLocked,
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(
                 labelText: 'Maximum concurrent targets',
@@ -2481,12 +2491,16 @@ class _DeploymentPageState extends State<DeploymentPage> {
   Widget _buildTargetsCard() {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Targets', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 12),
+            _buildSectionHeading(
+              icon: Icons.dns_outlined,
+              title: 'Targets',
+              description: 'Choose the endpoints for both operations.',
+            ),
+            const SizedBox(height: 20),
             SegmentedButton<TargetSource>(
               key: const Key('targetSourceSelector'),
               segments: const [
@@ -2502,7 +2516,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
                 ),
               ],
               selected: {_targetSource},
-              onSelectionChanged: _isRunning
+              onSelectionChanged: _controlsLocked
                   ? null
                   : (selection) {
                       setState(() => _targetSource = selection.first);
@@ -2516,7 +2530,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
                   TextField(
                     key: const Key('targetsFileEditor'),
                     controller: _targetsFileController,
-                    enabled: !_isRunning && !_isUpdatingTargetsFile,
+                    enabled: !_controlsLocked && !_isUpdatingTargetsFile,
                     minLines: 7,
                     maxLines: 12,
                     decoration: const InputDecoration(
@@ -2534,7 +2548,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
                     children: [
                       OutlinedButton.icon(
                         key: const Key('reloadTargetsButton'),
-                        onPressed: _isRunning || _isUpdatingTargetsFile
+                        onPressed: _controlsLocked || _isUpdatingTargetsFile
                             ? null
                             : _loadTargetsFile,
                         icon: const Icon(Icons.refresh),
@@ -2543,7 +2557,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
                       const SizedBox(width: 8),
                       FilledButton.icon(
                         key: const Key('saveTargetsButton'),
-                        onPressed: _isRunning || _isUpdatingTargetsFile
+                        onPressed: _controlsLocked || _isUpdatingTargetsFile
                             ? null
                             : _saveTargetsFile,
                         icon: const Icon(Icons.save_outlined),
@@ -2557,7 +2571,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
               TextField(
                 key: const Key('directTargetsField'),
                 controller: _targetsController,
-                enabled: !_isRunning,
+                enabled: !_controlsLocked,
                 minLines: 7,
                 maxLines: 12,
                 decoration: const InputDecoration(
@@ -2578,17 +2592,22 @@ class _DeploymentPageState extends State<DeploymentPage> {
     final shortcutsAvailable = _audioRecall && _displayRecall;
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Features', style: Theme.of(context).textTheme.titleLarge),
+            _buildSectionHeading(
+              icon: Icons.widgets_outlined,
+              title: 'Features',
+              description: 'Select the CTS components to install or update.',
+            ),
+            const SizedBox(height: 8),
             SwitchListTile(
               key: const Key('audioRecallSwitch'),
               contentPadding: EdgeInsets.zero,
               title: const Text('Audio recall'),
               value: _audioRecall,
-              onChanged: _isRunning
+              onChanged: _controlsLocked
                   ? null
                   : (value) => setState(() {
                       _audioRecall = value;
@@ -2602,7 +2621,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
               contentPadding: EdgeInsets.zero,
               title: const Text('Display recall'),
               value: _displayRecall,
-              onChanged: _isRunning
+              onChanged: _controlsLocked
                   ? null
                   : (value) => setState(() {
                       _displayRecall = value;
@@ -2616,7 +2635,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
               contentPadding: EdgeInsets.zero,
               title: const Text('Install BGInfo'),
               value: _bgInfoInstall,
-              onChanged: _isRunning
+              onChanged: _controlsLocked
                   ? null
                   : (value) => setState(() => _bgInfoInstall = value),
             ),
@@ -2632,7 +2651,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
                     ? null
                     : const Text('Requires Audio recall and Display recall.'),
                 value: shortcutsAvailable ? _addDesktopShortcuts : false,
-                onChanged: _isRunning || !shortcutsAvailable
+                onChanged: _controlsLocked || !shortcutsAvailable
                     ? null
                     : (value) => setState(() => _addDesktopShortcuts = value),
               ),
@@ -2644,13 +2663,20 @@ class _DeploymentPageState extends State<DeploymentPage> {
   }
 
   Color _pcProgressColor(PcProgress progress) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return switch (progress) {
-      PcProgress.queued => const Color(0xff94a3b8),
-      PcProgress.running => const Color(0xff38bdf8),
-      PcProgress.complete => const Color(0xff22c55e),
-      PcProgress.offline => const Color(0xff3b82f6),
-      PcProgress.warning => const Color(0xffff9800),
-      PcProgress.error || PcProgress.fatal => const Color(0xffef4444),
+      PcProgress.queued =>
+        dark ? const Color(0xffc4c7c5) : const Color(0xff5f6368),
+      PcProgress.running =>
+        dark ? const Color(0xff7dd3fc) : const Color(0xff075985),
+      PcProgress.complete =>
+        dark ? const Color(0xff6dd58c) : const Color(0xff146c2e),
+      PcProgress.offline =>
+        dark ? const Color(0xffa8c7fa) : const Color(0xff0b57d0),
+      PcProgress.warning =>
+        dark ? const Color(0xffffb95c) : const Color(0xff8a4a00),
+      PcProgress.error || PcProgress.fatal =>
+        dark ? const Color(0xffffb4ab) : const Color(0xffb3261e),
     };
   }
 
@@ -2688,7 +2714,14 @@ class _DeploymentPageState extends State<DeploymentPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        LinearProgressIndicator(value: progress),
+        LinearProgressIndicator(
+          value: progress,
+          minHeight: 8,
+          borderRadius: BorderRadius.circular(999),
+          semanticsLabel: 'Deployment progress',
+          semanticsValue:
+              '${_finishedTargets.length} of ${_knownTargets.length} targets finished',
+        ),
         const SizedBox(height: 8),
         Text(
           '${_finishedTargets.length} of ${_knownTargets.length} targets finished',
@@ -2712,8 +2745,11 @@ class _DeploymentPageState extends State<DeploymentPage> {
                         final pcColor = _pcProgressColor(pcProgress);
                         return Container(
                           key: Key('pcProgress-$pc'),
-                          height: 64,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          constraints: const BoxConstraints(minHeight: 80),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
                           decoration: BoxDecoration(
                             color: pcColor.withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(8),
@@ -2728,6 +2764,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
                                   child: CircularProgressIndicator(
                                     strokeWidth: 2.5,
                                     color: pcColor,
+                                    semanticsLabel: '$pc deployment is running',
                                   ),
                                 )
                               else
@@ -2738,38 +2775,47 @@ class _DeploymentPageState extends State<DeploymentPage> {
                                 ),
                               const SizedBox(width: 6),
                               Expanded(
-                                child: Tooltip(
-                                  message: pc,
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        truncateComputerName(pc),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.clip,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                      if (pcProgress != PcProgress.running)
+                                child: Semantics(
+                                  label:
+                                      '$pc. Deployment status: ${_pcProgressLabel(pcProgress)}.',
+                                  excludeSemantics: true,
+                                  child: Tooltip(
+                                    message: pc,
+                                    child: Column(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
                                         Text(
-                                          _pcProgressLabel(pcProgress),
-                                          style: const TextStyle(fontSize: 12),
+                                          truncateComputerName(pc),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.clip,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                          ),
                                         ),
-                                    ],
+                                        if (pcProgress != PcProgress.running)
+                                          Text(
+                                            _pcProgressLabel(pcProgress),
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .labelMedium
+                                                ?.copyWith(color: pcColor),
+                                          ),
+                                      ],
+                                    ),
                                   ),
                                 ),
                               ),
                               if (_finishedTargets.contains(pc) &&
-                                  !_isRunning) ...[
+                                  !_controlsLocked) ...[
                                 IconButton(
                                   key: Key('viewLogButton-$pc'),
                                   tooltip: 'View log for $pc',
                                   constraints: const BoxConstraints.tightFor(
-                                    width: 32,
-                                    height: 32,
+                                    width: 40,
+                                    height: 40,
                                   ),
                                   padding: EdgeInsets.zero,
                                   onPressed: () =>
@@ -2783,8 +2829,8 @@ class _DeploymentPageState extends State<DeploymentPage> {
                                   key: Key('retryPcButton-$pc'),
                                   tooltip: 'Retry $pc',
                                   constraints: const BoxConstraints.tightFor(
-                                    width: 32,
-                                    height: 32,
+                                    width: 40,
+                                    height: 40,
                                   ),
                                   padding: EdgeInsets.zero,
                                   onPressed: () => _startPostDeploymentRetry(
@@ -2809,43 +2855,86 @@ class _DeploymentPageState extends State<DeploymentPage> {
   }
 
   Widget _buildRunCard() {
+    final monitoringProgress = _monitorTargets.isEmpty
+        ? 0.0
+        : _monitorCompletedTargets.length / _monitorTargets.length;
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final summary = Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildSectionHeading(
+                      icon: Icons.rocket_launch_outlined,
+                      title: 'Operations',
+                      description: 'Start one operation at a time using the configuration above.',
+                    ),
+                    const SizedBox(height: 14),
+                    _buildOperationStatus(
+                      icon: Icons.rocket_launch_outlined,
+                      label: 'Deployment',
+                      status: _status,
+                      statusKey: const Key('statusText'),
+                    ),
+                    const SizedBox(height: 4),
+                    _buildOperationStatus(
+                      icon: Icons.monitor_heart_outlined,
+                      label: 'Monitoring',
+                      status: _monitorStatus,
+                    ),
+                  ],
+                );
+                final actions = _buildOperationActions();
+                final textScale = MediaQuery.textScalerOf(context).scale(1);
+                if (constraints.maxWidth < 650 * textScale.clamp(1, 1.5)) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Text(
-                        'Deployment',
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                      Text(_status, key: const Key('statusText')),
+                      summary,
+                      const SizedBox(height: 14),
+                      Align(alignment: Alignment.centerRight, child: actions),
                     ],
-                  ),
-                ),
-                if (_isRunning)
-                  OutlinedButton.icon(
-                    key: const Key('stopButton'),
-                    onPressed: _stopDeployment,
-                    icon: const Icon(Icons.stop),
-                    label: const Text('Stop'),
-                  )
-                else
-                  FilledButton.icon(
-                    key: const Key('deployButton'),
-                    onPressed: _startDeployment,
-                    icon: const Icon(Icons.play_arrow),
-                    label: const Text('Deploy'),
-                  ),
-              ],
+                  );
+                }
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: summary),
+                    const SizedBox(width: 16),
+                    actions,
+                  ],
+                );
+              },
             ),
+            if (_isMonitoring) ...[
+              const SizedBox(height: 16),
+              LinearProgressIndicator(
+                value: monitoringProgress,
+                minHeight: 8,
+                borderRadius: BorderRadius.circular(999),
+                semanticsLabel: 'Monitoring progress',
+                semanticsValue:
+                    '${_monitorCompletedTargets.length} of ${_monitorTargets.length} targets inspected',
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '${_monitorCompletedTargets.length} of ${_monitorTargets.length} targets inspected',
+                key: const Key('monitoringProgressText'),
+              ),
+            ],
+            const SizedBox(height: 16),
+            const Divider(),
             const SizedBox(height: 12),
+            Text(
+              'Deployment progress',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
             _buildProgressIndicators(),
             const SizedBox(height: 12),
             Align(
@@ -2862,6 +2951,69 @@ class _DeploymentPageState extends State<DeploymentPage> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildOperationStatus({
+    required IconData icon,
+    required String label,
+    required String status,
+    Key? statusKey,
+  }) {
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      label: '$label status: $status',
+      child: ExcludeSemantics(
+        child: Row(
+          children: [
+            Icon(icon, size: 18, color: Theme.of(context).colorScheme.primary),
+            const SizedBox(width: 8),
+            Text(
+              '$label: ',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            Expanded(child: Text(status, key: statusKey)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOperationActions() {
+    if (_isRunning) {
+      return OutlinedButton.icon(
+        key: const Key('stopButton'),
+        onPressed: _stopDeployment,
+        icon: const Icon(Icons.stop),
+        label: const Text('Stop deployment'),
+      );
+    }
+    if (_isMonitoring) {
+      return OutlinedButton.icon(
+        key: const Key('stopMonitoringButton'),
+        onPressed: _stopMonitoring,
+        icon: const Icon(Icons.stop),
+        label: const Text('Stop monitoring'),
+      );
+    }
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        OutlinedButton.icon(
+          key: const Key('startMonitoringButton'),
+          onPressed: _startMonitoring,
+          icon: const Icon(Icons.monitor_heart_rounded, size: 20),
+          label: const Text('Monitor'),
+        ),
+        FilledButton.icon(
+          key: const Key('deployButton'),
+          onPressed: _startDeployment,
+          icon: const Icon(Icons.rocket_launch_rounded, size: 20),
+          label: const Text('Deploy'),
+        ),
+      ],
     );
   }
 }
