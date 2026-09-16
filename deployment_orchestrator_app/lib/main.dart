@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -8,6 +9,26 @@ import 'native_orchestrator.dart';
 void main() {
   runApp(const DeploymentOrchestratorApp());
 }
+
+typedef DirectoryPicker = Future<String?> Function(String initialDirectory);
+
+Future<String?> _pickDirectory(String initialDirectory) {
+  return getDirectoryPath(
+    initialDirectory: initialDirectory,
+    confirmButtonText: 'Select BGInfo folder',
+    canCreateDirectories: false,
+  );
+}
+
+const bgInfoFolderHelp = '''BGInfo folder: the name of your folder in BGInfo.
+
+Place the following in that folder:
+• The latest BGInfo64.exe
+• One .bgi configuration file
+• One base image file
+
+Example: select “25_26” for this structure:
+RepoRoot\\BGInfo\\25_26''';
 
 ThemeData buildAppTheme(Brightness brightness, {bool highContrast = false}) {
   final isDark = brightness == Brightness.dark;
@@ -120,7 +141,9 @@ ThemeData buildAppTheme(Brightness brightness, {bool highContrast = false}) {
 }
 
 class DeploymentOrchestratorApp extends StatefulWidget {
-  const DeploymentOrchestratorApp({super.key});
+  const DeploymentOrchestratorApp({this.directoryPicker, super.key});
+
+  final DirectoryPicker? directoryPicker;
 
   @override
   State<DeploymentOrchestratorApp> createState() =>
@@ -142,6 +165,7 @@ class _DeploymentOrchestratorAppState extends State<DeploymentOrchestratorApp> {
       themeMode: _darkMode ? ThemeMode.dark : ThemeMode.light,
       home: DeploymentPage(
         darkMode: _darkMode,
+        directoryPicker: widget.directoryPicker ?? _pickDirectory,
         onToggleTheme: () => setState(() => _darkMode = !_darkMode),
       ),
     );
@@ -476,11 +500,13 @@ class ScriptDeploymentResult {
 class DeploymentPage extends StatefulWidget {
   const DeploymentPage({
     required this.darkMode,
+    required this.directoryPicker,
     required this.onToggleTheme,
     super.key,
   });
 
   final bool darkMode;
+  final DirectoryPicker directoryPicker;
   final VoidCallback onToggleTheme;
 
   @override
@@ -531,7 +557,6 @@ class _DeploymentPageState extends State<DeploymentPage> {
     super.initState();
     _projectRootController = TextEditingController(text: _findProjectRoot());
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadConfig(silent: true);
       _loadTargetsFile(silent: true);
     });
   }
@@ -576,57 +601,87 @@ class _DeploymentPageState extends State<DeploymentPage> {
   String _join(String parent, String child) =>
       '$parent${Platform.pathSeparator}$child';
 
-  bool? _readPythonBool(String source, String name) {
-    final match = RegExp(
-      '^\\s*${RegExp.escape(name)}\\s*=\\s*(True|False)',
-      multiLine: true,
-    ).firstMatch(source);
-    return switch (match?.group(1)) {
-      'True' => true,
-      'False' => false,
-      _ => null,
-    };
-  }
-
-  String? _readPythonString(String source, String name) {
-    final match = RegExp(
-      '^\\s*${RegExp.escape(name)}\\s*=\\s*["\']([^"\']*)["\']',
-      multiLine: true,
-    ).firstMatch(source);
-    return match?.group(1);
-  }
-
-  Future<void> _loadConfig({bool silent = false}) async {
-    final root = _projectRootController.text.trim();
-    final configFile = File(_join(root, 'config.py'));
-    try {
-      final source = await configFile.readAsString();
-      if (!mounted) return;
-      setState(() {
-        final audioRecall =
-            _readPythonBool(source, 'AUDIO_RECALL') ?? _audioRecall;
-        final displayRecall =
-            _readPythonBool(source, 'DISPLAY_RECALL') ?? _displayRecall;
-        _audioRecall = audioRecall;
-        _displayRecall = displayRecall;
-        _bgInfoInstall =
-            _readPythonBool(source, 'BGINFO_INSTALL') ?? _bgInfoInstall;
-        final addDesktopShortcuts =
-            _readPythonBool(source, 'ADD_DESKTOP_SHORTCUTS') ??
-            _addDesktopShortcuts;
-        _addDesktopShortcuts = audioRecall && displayRecall
-            ? addDesktopShortcuts
-            : false;
-        _bgInfoFolderController.text =
-            _readPythonString(source, 'BGINFO_FOLDER') ??
-            _bgInfoFolderController.text;
-      });
-      if (!silent) _showMessage('Loaded settings from config.py.');
-    } on FileSystemException {
-      if (!silent) {
-        _showMessage('Could not read ${configFile.path}.');
-      }
+  Future<bool> _selectBgInfoFolder() async {
+    final bgInfoRoot = Directory(
+      _join(_projectRootController.text.trim(), 'BGInfo'),
+    ).absolute;
+    final selectedPath = await widget.directoryPicker(bgInfoRoot.path);
+    if (selectedPath == null || selectedPath.trim().isEmpty || !mounted) {
+      return false;
     }
+
+    final selected = Directory(selectedPath).absolute;
+    final expectedParent = _comparablePath(bgInfoRoot.path);
+    final actualParent = _comparablePath(selected.parent.path);
+    if (actualParent != expectedParent) {
+      _showMessage('Select a folder directly inside ${bgInfoRoot.path}.');
+      return false;
+    }
+
+    final folderName = selected.path
+        .replaceAll(RegExp(r'[\\/]+$'), '')
+        .split(RegExp(r'[\\/]'))
+        .last;
+    if (folderName.isEmpty) return false;
+    setState(() => _bgInfoFolderController.text = folderName);
+    return true;
+  }
+
+  String _comparablePath(String path) {
+    final normalized = path
+        .replaceAll('/', Platform.pathSeparator)
+        .replaceAll(RegExp(r'[\\/]+$'), '');
+    return Platform.isWindows ? normalized.toLowerCase() : normalized;
+  }
+
+  Future<void> _showBgInfoFolderDialog({
+    bool enableAfterSelection = false,
+  }) async {
+    final selected = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.info_outline),
+            SizedBox(width: 10),
+            Text('BGInfo folder'),
+          ],
+        ),
+        content: const SelectableText(bgInfoFolderHelp),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            key: const Key('bgInfoModalSelectButton'),
+            onPressed: () async {
+              final didSelect = await _selectBgInfoFolder();
+              if (didSelect && dialogContext.mounted) {
+                Navigator.of(dialogContext).pop(true);
+              }
+            },
+            icon: const Icon(Icons.folder_open),
+            label: const Text('Select folder'),
+          ),
+        ],
+      ),
+    );
+    if (enableAfterSelection && selected == true && mounted) {
+      setState(() => _bgInfoInstall = true);
+    }
+  }
+
+  Future<void> _setBgInfoInstall(bool value) async {
+    if (!value) {
+      setState(() => _bgInfoInstall = false);
+      return;
+    }
+    if (_bgInfoFolderController.text.trim().isEmpty) {
+      await _showBgInfoFolderDialog(enableAfterSelection: true);
+      return;
+    }
+    setState(() => _bgInfoInstall = true);
   }
 
   Future<void> _loadTargetsFile({bool silent = false}) async {
@@ -2221,32 +2276,46 @@ class _DeploymentPageState extends State<DeploymentPage> {
                 border: OutlineInputBorder(),
               ),
             ),
-            const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerRight,
-              child: OutlinedButton.icon(
-                key: const Key('loadConfigButton'),
-                onPressed: _controlsLocked ? null : _loadConfig,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Load config.py defaults'),
-              ),
-            ),
             const SizedBox(height: 16),
             Text(
               'Deployment options',
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 12),
-            TextField(
-              key: const Key('bgInfoFolderField'),
-              controller: _bgInfoFolderController,
-              enabled: !_controlsLocked,
-              decoration: const InputDecoration(
-                labelText: 'BGInfo folder',
-                hintText: '25_26',
-                prefixText: r'BGInfo\',
-                border: OutlineInputBorder(),
-              ),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: TextField(
+                    key: const Key('bgInfoFolderField'),
+                    controller: _bgInfoFolderController,
+                    enabled: !_controlsLocked,
+                    readOnly: true,
+                    onTap: _controlsLocked ? null : _selectBgInfoFolder,
+                    decoration: InputDecoration(
+                      labelText: 'BGInfo folder',
+                      hintText: 'Select a folder',
+                      prefixText: r'BGInfo\',
+                      border: const OutlineInputBorder(),
+                      suffixIcon: IconButton(
+                        key: const Key('bgInfoFolderPickerButton'),
+                        tooltip: 'Select BGInfo folder',
+                        onPressed: _controlsLocked ? null : _selectBgInfoFolder,
+                        icon: const Icon(Icons.folder_open),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Tooltip(
+                  message: 'BGInfo folder help',
+                  child: IconButton(
+                    key: const Key('bgInfoHelpButton'),
+                    onPressed: _showBgInfoFolderDialog,
+                    icon: const Icon(Icons.help_outline),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
             TextField(
@@ -2412,9 +2481,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
               contentPadding: EdgeInsets.zero,
               title: const Text('Install BGInfo'),
               value: _bgInfoInstall,
-              onChanged: _controlsLocked
-                  ? null
-                  : (value) => setState(() => _bgInfoInstall = value),
+              onChanged: _controlsLocked ? null : _setBgInfoInstall,
             ),
             Tooltip(
               message: shortcutsAvailable

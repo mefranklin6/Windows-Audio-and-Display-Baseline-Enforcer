@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -33,9 +35,136 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('projectRootField')), findsOneWidget);
     expect(find.byKey(const Key('pythonField')), findsNothing);
-    expect(find.byKey(const Key('loadConfigButton')), findsOneWidget);
     expect(find.byKey(const Key('bgInfoFolderField')), findsOneWidget);
+    expect(find.byKey(const Key('bgInfoFolderPickerButton')), findsOneWidget);
+    expect(find.byKey(const Key('bgInfoHelpButton')), findsOneWidget);
     expect(find.byKey(const Key('workersField')), findsOneWidget);
+  });
+
+  testWidgets('uses built-in feature defaults and an empty BGInfo folder', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const DeploymentOrchestratorApp());
+    await tester.pump();
+
+    expect(
+      tester
+          .widget<SwitchListTile>(find.byKey(const Key('audioRecallSwitch')))
+          .value,
+      isTrue,
+    );
+    expect(
+      tester
+          .widget<SwitchListTile>(find.byKey(const Key('displayRecallSwitch')))
+          .value,
+      isTrue,
+    );
+    expect(
+      tester
+          .widget<SwitchListTile>(find.byKey(const Key('bgInfoSwitch')))
+          .value,
+      isFalse,
+    );
+    expect(
+      tester
+          .widget<SwitchListTile>(find.byKey(const Key('shortcutsSwitch')))
+          .value,
+      isTrue,
+    );
+
+    await tester.tap(find.byKey(const Key('settingsButton')));
+    await tester.pumpAndSettle();
+    final folderField = tester.widget<TextField>(
+      find.byKey(const Key('bgInfoFolderField')),
+    );
+    expect(folderField.controller?.text, isEmpty);
+    expect(folderField.readOnly, isTrue);
+  });
+
+  testWidgets('prompts for a BGInfo folder before enabling the feature', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var pickerCalls = 0;
+
+    await tester.pumpWidget(
+      DeploymentOrchestratorApp(
+        directoryPicker: (initialDirectory) async {
+          pickerCalls++;
+          return '$initialDirectory${Platform.pathSeparator}Classroom';
+        },
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('bgInfoSwitch')));
+    await tester.pumpAndSettle();
+    expect(find.text('BGInfo folder'), findsOneWidget);
+    expect(find.text(bgInfoFolderHelp), findsOneWidget);
+    expect(
+      tester
+          .widget<SwitchListTile>(find.byKey(const Key('bgInfoSwitch')))
+          .value,
+      isFalse,
+    );
+
+    await tester.tap(find.byKey(const Key('bgInfoModalSelectButton')));
+    await tester.pumpAndSettle();
+    expect(pickerCalls, 1);
+    expect(
+      tester
+          .widget<SwitchListTile>(find.byKey(const Key('bgInfoSwitch')))
+          .value,
+      isTrue,
+    );
+
+    await tester.tap(find.byKey(const Key('settingsButton')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('bgInfoFolderField')))
+          .controller
+          ?.text,
+      'Classroom',
+    );
+    await tester.tap(find.byKey(const Key('bgInfoHelpButton')));
+    await tester.pumpAndSettle();
+    expect(find.text(bgInfoFolderHelp), findsOneWidget);
+  });
+
+  testWidgets('selects the BGInfo folder from Settings', (tester) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      DeploymentOrchestratorApp(
+        directoryPicker: (initialDirectory) async =>
+            '$initialDirectory${Platform.pathSeparator}Auditorium',
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('settingsButton')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('bgInfoFolderPickerButton')));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('bgInfoFolderField')))
+          .controller
+          ?.text,
+      'Auditorium',
+    );
   });
 
   testWidgets('shows monitoring in the unified operations view', (
