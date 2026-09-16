@@ -101,6 +101,7 @@ void main() {
           pickerCalls++;
           return '$initialDirectory${Platform.pathSeparator}Classroom';
         },
+        bgInfoAssetValidator: (_) async => const BgInfoFolderValidation.valid(),
       ),
     );
     await tester.pump();
@@ -150,6 +151,7 @@ void main() {
       DeploymentOrchestratorApp(
         directoryPicker: (initialDirectory) async =>
             '$initialDirectory${Platform.pathSeparator}Auditorium',
+        bgInfoAssetValidator: (_) async => const BgInfoFolderValidation.valid(),
       ),
     );
     await tester.pump();
@@ -165,6 +167,66 @@ void main() {
           ?.text,
       'Auditorium',
     );
+  });
+
+  testWidgets('keeps BGInfo disabled and explains invalid assets', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      DeploymentOrchestratorApp(
+        directoryPicker: (initialDirectory) async =>
+            '$initialDirectory${Platform.pathSeparator}Incomplete',
+        bgInfoAssetValidator: (_) async => const BgInfoFolderValidation([
+          'Add one BGInfo64.exe for the BGInfo executable.',
+          'Add one .bgi file for the BGInfo configuration.',
+          'Add one compatible image (.jpg, .jpeg, .png, .bmp, or .gif) for the BGInfo background image.',
+        ]),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('bgInfoSwitch')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('bgInfoModalSelectButton')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('BGInfo folder needs attention'), findsOneWidget);
+    expect(find.textContaining('Add one BGInfo64.exe'), findsOneWidget);
+    expect(find.textContaining('Add one compatible image'), findsOneWidget);
+    expect(
+      tester
+          .widget<SwitchListTile>(find.byKey(const Key('bgInfoSwitch')))
+          .value,
+      isFalse,
+    );
+  });
+
+  test('validates required BGInfo assets', () async {
+    final folder = await Directory.systemTemp.createTemp('bginfo-validation-');
+    addTearDown(() => folder.delete(recursive: true));
+
+    final empty = await validateBgInfoFolder(folder);
+    expect(empty.isValid, isFalse);
+    expect(empty.errors, hasLength(3));
+
+    await File('${folder.path}${Platform.pathSeparator}BGInfo64.exe')
+        .writeAsString('');
+    await File('${folder.path}${Platform.pathSeparator}profile.bgi')
+        .writeAsString('');
+    await File('${folder.path}${Platform.pathSeparator}background.png')
+        .writeAsString('');
+    expect((await validateBgInfoFolder(folder)).isValid, isTrue);
+
+    await File('${folder.path}${Platform.pathSeparator}second.bgi')
+        .writeAsString('');
+    final duplicate = await validateBgInfoFolder(folder);
+    expect(duplicate.isValid, isFalse);
+    expect(duplicate.errors.single, contains('Keep only one .bgi file'));
   });
 
   testWidgets('shows monitoring in the unified operations view', (

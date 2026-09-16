@@ -11,6 +11,9 @@ void main() {
 }
 
 typedef DirectoryPicker = Future<String?> Function(String initialDirectory);
+typedef BgInfoAssetValidator = Future<BgInfoFolderValidation> Function(
+  Directory folder,
+);
 
 Future<String?> _pickDirectory(String initialDirectory) {
   return getDirectoryPath(
@@ -25,10 +28,71 @@ const bgInfoFolderHelp = '''BGInfo folder: the name of your folder in BGInfo.
 Place the following in that folder:
 • The latest BGInfo64.exe
 • One .bgi configuration file
-• One base image file
+• One compatible image file (.jpg, .jpeg, .png, .bmp, or .gif)
 
 Example: select “25_26” for this structure:
 RepoRoot\\BGInfo\\25_26''';
+
+class BgInfoFolderValidation {
+  const BgInfoFolderValidation(this.errors);
+
+  const BgInfoFolderValidation.valid() : errors = const [];
+
+  final List<String> errors;
+
+  bool get isValid => errors.isEmpty;
+}
+
+Future<BgInfoFolderValidation> validateBgInfoFolder(Directory folder) async {
+  final executables = <String>[];
+  final configurations = <String>[];
+  final images = <String>[];
+  const imageExtensions = {'.jpg', '.jpeg', '.png', '.bmp', '.gif'};
+
+  try {
+    await for (final entity in folder.list(followLinks: false)) {
+      if (entity is! File) continue;
+      final name = entity.uri.pathSegments.last;
+      final normalizedName = name.toLowerCase();
+      if (normalizedName == 'bginfo64.exe') {
+        executables.add(name);
+      } else if (normalizedName.endsWith('.bgi')) {
+        configurations.add(name);
+      } else if (imageExtensions.any(normalizedName.endsWith)) {
+        images.add(name);
+      }
+    }
+  } on FileSystemException catch (error) {
+    return BgInfoFolderValidation([
+      'The folder could not be read: ${error.message}',
+    ]);
+  }
+
+  String? singleFileError(
+    List<String> files,
+    String description,
+    String requiredFile,
+  ) {
+    if (files.isEmpty) {
+      return 'Add one $requiredFile for the $description.';
+    }
+    if (files.length > 1) {
+      return 'Keep only one $requiredFile for the $description; found: ${files.join(', ')}.';
+    }
+    return null;
+  }
+
+  final errors = <String>[
+    ?singleFileError(executables, 'BGInfo executable', 'BGInfo64.exe'),
+    ?singleFileError(configurations, 'BGInfo configuration', '.bgi file'),
+    ?singleFileError(
+      images,
+      'BGInfo background image',
+      'compatible image (.jpg, .jpeg, .png, .bmp, or .gif)',
+    ),
+  ];
+  return BgInfoFolderValidation(errors);
+}
 
 ThemeData buildAppTheme(Brightness brightness, {bool highContrast = false}) {
   final isDark = brightness == Brightness.dark;
@@ -141,9 +205,14 @@ ThemeData buildAppTheme(Brightness brightness, {bool highContrast = false}) {
 }
 
 class DeploymentOrchestratorApp extends StatefulWidget {
-  const DeploymentOrchestratorApp({this.directoryPicker, super.key});
+  const DeploymentOrchestratorApp({
+    this.directoryPicker,
+    this.bgInfoAssetValidator,
+    super.key,
+  });
 
   final DirectoryPicker? directoryPicker;
+  final BgInfoAssetValidator? bgInfoAssetValidator;
 
   @override
   State<DeploymentOrchestratorApp> createState() =>
@@ -166,6 +235,8 @@ class _DeploymentOrchestratorAppState extends State<DeploymentOrchestratorApp> {
       home: DeploymentPage(
         darkMode: _darkMode,
         directoryPicker: widget.directoryPicker ?? _pickDirectory,
+        bgInfoAssetValidator:
+            widget.bgInfoAssetValidator ?? validateBgInfoFolder,
         onToggleTheme: () => setState(() => _darkMode = !_darkMode),
       ),
     );
@@ -501,12 +572,14 @@ class DeploymentPage extends StatefulWidget {
   const DeploymentPage({
     required this.darkMode,
     required this.directoryPicker,
+    required this.bgInfoAssetValidator,
     required this.onToggleTheme,
     super.key,
   });
 
   final bool darkMode;
   final DirectoryPicker directoryPicker;
+  final BgInfoAssetValidator bgInfoAssetValidator;
   final VoidCallback onToggleTheme;
 
   @override
@@ -623,6 +696,11 @@ class _DeploymentPageState extends State<DeploymentPage> {
         .split(RegExp(r'[\\/]'))
         .last;
     if (folderName.isEmpty) return false;
+    final validation = await widget.bgInfoAssetValidator(selected);
+    if (!validation.isValid) {
+      if (mounted) await _showBgInfoAssetErrorDialog(validation);
+      return false;
+    }
     setState(() => _bgInfoFolderController.text = folderName);
     return true;
   }
@@ -672,6 +750,58 @@ class _DeploymentPageState extends State<DeploymentPage> {
     }
   }
 
+  Future<void> _showBgInfoAssetErrorDialog(BgInfoFolderValidation validation) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.error_outline),
+            SizedBox(width: 10),
+            Text('BGInfo folder needs attention'),
+          ],
+        ),
+        content: SizedBox(
+          width: 480,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'BGInfo remains disabled until this folder has exactly one of each required asset:',
+              ),
+              const SizedBox(height: 12),
+              SelectableText(
+                validation.errors.map((error) => '• $error').join('\n'),
+              ),
+              const SizedBox(height: 12),
+              const Text('Fix the listed files, then select the folder again.'),
+            ],
+          ),
+        ),
+        actions: [
+          FilledButton(
+            key: const Key('bgInfoAssetErrorCloseButton'),
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<bool> _validateCurrentBgInfoFolder() async {
+    final folderName = _bgInfoFolderController.text.trim();
+    if (folderName.isEmpty) return false;
+    final folder = Directory(
+      _join(_join(_projectRootController.text.trim(), 'BGInfo'), folderName),
+    );
+    final validation = await widget.bgInfoAssetValidator(folder);
+    if (validation.isValid) return true;
+    if (mounted) await _showBgInfoAssetErrorDialog(validation);
+    return false;
+  }
+
   Future<void> _setBgInfoInstall(bool value) async {
     if (!value) {
       setState(() => _bgInfoInstall = false);
@@ -681,6 +811,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
       await _showBgInfoFolderDialog(enableAfterSelection: true);
       return;
     }
+    if (!await _validateCurrentBgInfoFolder()) return;
     setState(() => _bgInfoInstall = true);
   }
 
@@ -1035,9 +1166,12 @@ class _DeploymentPageState extends State<DeploymentPage> {
       _showMessage('Maximum workers must be a whole number of at least 1.');
       return null;
     }
-    if (_bgInfoInstall && _bgInfoFolderController.text.trim().isEmpty) {
-      _showMessage('Enter a BGInfo folder when BGInfo is enabled.');
-      return null;
+    if (_bgInfoInstall) {
+      if (_bgInfoFolderController.text.trim().isEmpty) {
+        await _showBgInfoFolderDialog();
+        return null;
+      }
+      if (!await _validateCurrentBgInfoFolder()) return null;
     }
     if (targetsOverride == null &&
         _targetSource == TargetSource.file &&
@@ -1149,9 +1283,12 @@ class _DeploymentPageState extends State<DeploymentPage> {
       _showMessage('Maximum workers must be a whole number of at least 1.');
       return null;
     }
-    if (_bgInfoInstall && _bgInfoFolderController.text.trim().isEmpty) {
-      _showMessage('Enter a BGInfo folder when BGInfo is enabled.');
-      return null;
+    if (_bgInfoInstall) {
+      if (_bgInfoFolderController.text.trim().isEmpty) {
+        await _showBgInfoFolderDialog();
+        return null;
+      }
+      if (!await _validateCurrentBgInfoFolder()) return null;
     }
 
     if (refreshDeploymentArea) {
