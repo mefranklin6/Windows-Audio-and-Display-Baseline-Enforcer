@@ -223,3 +223,6 @@ __marimo__/
 *.jpeg
 *.png
 *.bmp
+
+# Don't ignore png's in images folder (used for readme)
+!/images/**/*.png
