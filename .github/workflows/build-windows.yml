@@ -1,0 +1,105 @@
+name: Build Windows app
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows release
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        working-directory: deployment_orchestrator_app
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Run tests
+        run: flutter test
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+
+      - name: Resolve release version
+        id: version
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Release tags must use vMAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH (received '$env:GITHUB_REF_NAME')."
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Build Windows app
+        shell: pwsh
+        run: >-
+          flutter build windows --release
+          --build-name "${{ steps.version.outputs.version }}"
+          --dart-define "APP_VERSION=${{ steps.version.outputs.version }}"
+
+      - name: Build single-file installer
+        id: package
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $repoRoot = (Resolve-Path '..').Path
+          $sourceDir = (Resolve-Path 'build\windows\x64\runner\Release').Path
+          $outputDir = Join-Path $env:RUNNER_TEMP 'installer'
+          New-Item -ItemType Directory -Path $outputDir | Out-Null
+
+          $iscc = (Get-Command 'iscc.exe' -ErrorAction Stop).Source
+          & $iscc "/DAppVersion=$version" "/DSourceDir=$sourceDir" "/DRepoRoot=$repoRoot" "/DOutputDir=$outputDir" '..\installer\windows-setup.iss'
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE." }
+
+          $setup = Join-Path $outputDir "Windows-Audio-and-Display-Baseline-Enforcer-$version-Setup.exe"
+          if (-not (Test-Path -LiteralPath $setup)) { throw "Installer was not created at $setup." }
+          $checksum = "$setup.sha256"
+          $hash = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $(Split-Path -Leaf $setup)" | Set-Content -LiteralPath $checksum -Encoding ascii
+
+          "name=Windows-Audio-and-Display-Baseline-Enforcer-$version" >> $env:GITHUB_OUTPUT
+          "setup=$setup" >> $env:GITHUB_OUTPUT
+          "checksum=$checksum" >> $env:GITHUB_OUTPUT
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: |
+            ${{ steps.package.outputs.setup }}
+            ${{ steps.package.outputs.checksum }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $setup = '${{ steps.package.outputs.setup }}'
+          $checksum = '${{ steps.package.outputs.checksum }}'
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $setup $checksum --clobber
+          } else {
+            gh release create $tag $setup $checksum --verify-tag --generate-notes --title $tag
+          }
+          if ($LASTEXITCODE -ne 0) { throw "Publishing GitHub Release $tag failed." }
