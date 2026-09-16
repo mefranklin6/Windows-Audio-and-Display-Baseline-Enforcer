@@ -32,7 +32,8 @@ void main() {
     await tester.tap(find.byKey(const Key('settingsButton')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('projectRootField')), findsOneWidget);
-    expect(find.byKey(const Key('pythonField')), findsOneWidget);
+    expect(find.byKey(const Key('pythonField')), findsNothing);
+    expect(find.byKey(const Key('loadConfigButton')), findsOneWidget);
     expect(find.byKey(const Key('bgInfoFolderField')), findsOneWidget);
     expect(find.byKey(const Key('workersField')), findsOneWidget);
   });

@@ -1,9 +1,9 @@
-import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
+import 'native_orchestrator.dart';
 
 void main() {
   runApp(const DeploymentOrchestratorApp());
@@ -489,9 +489,6 @@ class DeploymentPage extends StatefulWidget {
 
 class _DeploymentPageState extends State<DeploymentPage> {
   late final TextEditingController _projectRootController;
-  final TextEditingController _pythonController = TextEditingController(
-    text: 'python',
-  );
   final TextEditingController _targetsController = TextEditingController();
   final TextEditingController _targetsFileController = TextEditingController();
   final TextEditingController _bgInfoFolderController = TextEditingController();
@@ -510,12 +507,9 @@ class _DeploymentPageState extends State<DeploymentPage> {
   bool _isMonitoring = false;
   bool _isUpdatingTargetsFile = false;
   bool _stopRequested = false;
-  Process? _process;
-  Process? _monitorProcess;
-  StreamSubscription<String>? _stdoutSubscription;
-  StreamSubscription<String>? _stderrSubscription;
-  StreamSubscription<String>? _monitorStdoutSubscription;
-  StreamSubscription<String>? _monitorStderrSubscription;
+  bool _monitorStopRequested = false;
+  NativeOrchestrator? _deploymentOrchestrator;
+  NativeOrchestrator? _monitoringOrchestrator;
   String _output = '';
   String _status = 'Ready';
   String? _detailedLogPath;
@@ -544,12 +538,9 @@ class _DeploymentPageState extends State<DeploymentPage> {
 
   @override
   void dispose() {
-    _stdoutSubscription?.cancel();
-    _stderrSubscription?.cancel();
-    _monitorStdoutSubscription?.cancel();
-    _monitorStderrSubscription?.cancel();
+    _deploymentOrchestrator?.cancel();
+    _monitoringOrchestrator?.cancel();
     _projectRootController.dispose();
-    _pythonController.dispose();
     _targetsController.dispose();
     _targetsFileController.dispose();
     _bgInfoFolderController.dispose();
@@ -568,8 +559,10 @@ class _DeploymentPageState extends State<DeploymentPage> {
     for (final start in starts) {
       var directory = Directory(start);
       for (var level = 0; level < 8; level++) {
-        if (File(_join(directory.path, 'Deployment_Orchestrator.py'))
-            .existsSync()) {
+        if (File(_join(directory.path, 'utility_scripts\\MonitorTarget.ps1'))
+                .existsSync() &&
+            Directory(_join(directory.path, 'installer_scripts'))
+                .existsSync()) {
           return directory.path;
         }
         final parent = directory.parent;
@@ -582,16 +575,6 @@ class _DeploymentPageState extends State<DeploymentPage> {
 
   String _join(String parent, String child) =>
       '$parent${Platform.pathSeparator}$child';
-
-  String _cleanExecutable(String value) {
-    final trimmed = value.trim();
-    if (trimmed.length >= 2 &&
-        trimmed.startsWith('"') &&
-        trimmed.endsWith('"')) {
-      return trimmed.substring(1, trimmed.length - 1);
-    }
-    return trimmed;
-  }
 
   bool? _readPythonBool(String source, String name) {
     final match = RegExp(
@@ -985,20 +968,12 @@ class _DeploymentPageState extends State<DeploymentPage> {
     }
     FocusManager.instance.primaryFocus?.unfocus();
     final root = _projectRootController.text.trim();
-    final python = _cleanExecutable(_pythonController.text);
     final workers = int.tryParse(_workersController.text.trim());
-    final orchestrator = File(_join(root, 'Deployment_Orchestrator.py'));
     final targetFile = File(_join(root, 'targets.txt'));
     final directTargets = _directTargets();
 
-    if (!orchestrator.existsSync()) {
-      _showMessage(
-        'Deployment_Orchestrator.py was not found in the project root.',
-      );
-      return null;
-    }
-    if (python.isEmpty) {
-      _showMessage('Enter a Python executable or command.');
+    if (!Directory(_join(root, 'installer_scripts')).existsSync()) {
+      _showMessage('The installer_scripts folder was not found.');
       return null;
     }
     if (workers == null || workers < 1) {
@@ -1031,38 +1006,6 @@ class _DeploymentPageState extends State<DeploymentPage> {
       _showMessage('No target PCs were provided.');
       return null;
     }
-    final resultFile = _join(
-      _join(root, 'logs'),
-      'app-result-${DateTime.now().millisecondsSinceEpoch}.json',
-    );
-
-    final arguments = <String>[
-      orchestrator.path,
-      _audioRecall ? '--audio-recall' : '--no-audio-recall',
-      _displayRecall ? '--display-recall' : '--no-display-recall',
-      _bgInfoInstall ? '--bginfo-install' : '--no-bginfo-install',
-      _addDesktopShortcuts
-          ? '--add-desktop-shortcuts'
-          : '--no-add-desktop-shortcuts',
-      '--bginfo-folder',
-      _bgInfoFolderController.text.trim(),
-      '--max-workers',
-      workers.toString(),
-      '--result-file',
-      resultFile,
-    ];
-    if (targetsOverride != null) {
-      for (final target in deploymentTargets) {
-        arguments.addAll(['--target', target]);
-      }
-    } else if (_targetSource == TargetSource.file) {
-      arguments.addAll(['--targets-file', _join(root, 'targets.txt')]);
-    } else {
-      for (final target in directTargets) {
-        arguments.addAll(['--target', target]);
-      }
-    }
-
     setState(() {
       _isRunning = true;
       _status = targetsOverride == null
@@ -1077,106 +1020,61 @@ class _DeploymentPageState extends State<DeploymentPage> {
       _stopRequested = false;
     });
 
+    final orchestrator = NativeOrchestrator(
+      projectRoot: root,
+      maxWorkers: workers,
+      onLog: _appendOutput,
+    );
+    _deploymentOrchestrator = orchestrator;
     try {
-      final process = await Process.start(
-        python,
-        arguments,
-        workingDirectory: root,
-        runInShell: false,
-      );
-      _process = process;
-      if (!mounted) {
-        process.kill();
-        return null;
-      }
       setState(() {
         _status = targetsOverride == null
-            ? 'Deploying (PID ${process.pid})'
-            : 'Redeploying ${deploymentTargets.length} selected PC(s) '
-                  '(PID ${process.pid})';
+            ? 'Deploying ${deploymentTargets.length} target(s)'
+            : 'Redeploying ${deploymentTargets.length} selected PC(s)';
       });
-
-      _stdoutSubscription = process.stdout
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())
-          .listen((line) => _appendOutput(line));
-      _stderrSubscription = process.stderr
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())
-          .listen((line) => _appendOutput('ERROR: $line'));
-
-      final exitCode = await process.exitCode;
-      await _stdoutSubscription?.cancel();
-      await _stderrSubscription?.cancel();
+      final report = DeploymentReport.fromJson(
+        await orchestrator.deploy(
+          deploymentTargets,
+          DeploymentOptions(
+            audioRecall: _audioRecall,
+            displayRecall: _displayRecall,
+            bgInfoInstall: _bgInfoInstall,
+            desktopShortcuts: _addDesktopShortcuts,
+            bgInfoFolder: _bgInfoFolderController.text.trim(),
+          ),
+        ),
+      );
       if (!mounted) return null;
-      DeploymentReport? report;
-      try {
-        final reportJson = jsonDecode(await File(resultFile).readAsString());
-        report = DeploymentReport.fromJson(reportJson as Map<String, dynamic>);
-      } on FileSystemException catch (error) {
-        _appendOutput(
-          'ERROR: Could not read deployment summary: ${error.message}',
-        );
-      } on FormatException catch (error) {
-        _appendOutput('ERROR: Invalid deployment summary: ${error.message}');
-      }
-      if (report != null) _appendReportScriptStatuses(report);
-      final reportHasProblems =
-          report?.pcs.any((result) => result.hasProblems) ?? exitCode != 0;
+      _appendReportScriptStatuses(report);
+      final reportHasProblems = report.pcs.any((result) => result.hasProblems);
       setState(() {
-        _process = null;
+        _deploymentOrchestrator = null;
         _isRunning = false;
-        _detailedLogPath = report?.logFile;
-        if (report != null) {
-          _knownTargets = report.pcs.map((result) => result.pc).toList();
-          _pcProgress = {
-            for (final result in report.pcs)
-              result.pc: _progressForResult(result),
-          };
-          _finishedTargets = report.pcs.map((result) => result.pc).toSet();
-        }
+        _detailedLogPath = report.logFile;
+        _knownTargets = report.pcs.map((result) => result.pc).toList();
+        _pcProgress = {
+          for (final result in report.pcs)
+            result.pc: _progressForResult(result),
+        };
+        _finishedTargets = report.pcs.map((result) => result.pc).toSet();
         final operationName = targetsOverride == null
             ? 'Deployment'
             : 'Filtered redeployment';
         _status = _stopRequested
             ? '$operationName stopped'
-            : exitCode != 0
-            ? '$operationName exited with code $exitCode'
             : reportHasProblems
             ? '$operationName finished with issues'
             : '$operationName finished successfully';
       });
-      if (!_stopRequested) {
-        report ??= DeploymentReport(
-          logFile: '',
-          pcs: deploymentTargets
-              .map(
-                (pc) => PcDeploymentResult(
-                  pc: pc,
-                  highestSeverity: 'fatal',
-                  issues: const [
-                    DeploymentIssue(
-                      component: 'Orchestrator',
-                      severity: 'fatal',
-                      message:
-                          'A structured deployment result was not available.',
-                    ),
-                  ],
-                  scripts: const [],
-                ),
-              )
-              .toList(),
-        );
-      }
       return report;
-    } on ProcessException catch (error) {
+    } on Object catch (error) {
       if (!mounted) return null;
       setState(() {
-        _process = null;
+        _deploymentOrchestrator = null;
         _isRunning = false;
         _status = 'Could not start deployment';
       });
-      _appendOutput(error.message);
+      _appendOutput('ERROR: $error');
       return null;
     }
   }
@@ -1187,17 +1085,9 @@ class _DeploymentPageState extends State<DeploymentPage> {
     ValueChanged<String>? onProgress,
   }) async {
     final root = _projectRootController.text.trim();
-    final python = _cleanExecutable(_pythonController.text);
     final workers = int.tryParse(_workersController.text.trim());
-    final orchestrator = File(_join(root, 'Deployment_Orchestrator.py'));
-    if (!orchestrator.existsSync()) {
-      _showMessage(
-        'Deployment_Orchestrator.py was not found in the project root.',
-      );
-      return null;
-    }
-    if (python.isEmpty) {
-      _showMessage('Enter a Python executable or command.');
+    if (!Directory(_join(root, 'installer_scripts')).existsSync()) {
+      _showMessage('The installer_scripts folder was not found.');
       return null;
     }
     if (workers == null || workers < 1) {
@@ -1209,28 +1099,6 @@ class _DeploymentPageState extends State<DeploymentPage> {
       return null;
     }
 
-    final resultFile = _join(
-      _join(root, 'logs'),
-      'app-retry-${DateTime.now().microsecondsSinceEpoch}.json',
-    );
-    final arguments = <String>[
-      orchestrator.path,
-      _audioRecall ? '--audio-recall' : '--no-audio-recall',
-      _displayRecall ? '--display-recall' : '--no-display-recall',
-      _bgInfoInstall ? '--bginfo-install' : '--no-bginfo-install',
-      _addDesktopShortcuts
-          ? '--add-desktop-shortcuts'
-          : '--no-add-desktop-shortcuts',
-      '--bginfo-folder',
-      _bgInfoFolderController.text.trim(),
-      '--max-workers',
-      workers.toString(),
-      '--result-file',
-      resultFile,
-      '--target',
-      target,
-    ];
-
     if (refreshDeploymentArea) {
       setState(() {
         _pcProgress = {..._pcProgress, target: PcProgress.queued};
@@ -1238,54 +1106,29 @@ class _DeploymentPageState extends State<DeploymentPage> {
       });
     }
 
+    final orchestrator = NativeOrchestrator(
+      projectRoot: root,
+      maxWorkers: workers,
+      onLog: (line) => _appendOutput(
+        line,
+        onProgress: onProgress,
+        updateProgress: refreshDeploymentArea,
+      ),
+    );
     try {
-      final process = await Process.start(
-        python,
-        arguments,
-        workingDirectory: root,
-        runInShell: false,
+      final report = DeploymentReport.fromJson(
+        await orchestrator.deploy(
+          [target],
+          DeploymentOptions(
+            audioRecall: _audioRecall,
+            displayRecall: _displayRecall,
+            bgInfoInstall: _bgInfoInstall,
+            desktopShortcuts: _addDesktopShortcuts,
+            bgInfoFolder: _bgInfoFolderController.text.trim(),
+          ),
+        ),
       );
-      if (!mounted) {
-        process.kill();
-        return null;
-      }
-      final stdoutSubscription = process.stdout
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())
-          .listen(
-            (line) => _appendOutput(
-              line,
-              onProgress: onProgress,
-              updateProgress: refreshDeploymentArea,
-            ),
-          );
-      final stderrSubscription = process.stderr
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())
-          .listen(
-            (line) => _appendOutput(
-              'ERROR: $line',
-              onProgress: onProgress,
-              updateProgress: refreshDeploymentArea,
-            ),
-          );
-      await process.exitCode;
-      await stdoutSubscription.cancel();
-      await stderrSubscription.cancel();
       if (!mounted) return null;
-
-      DeploymentReport? report;
-      try {
-        final reportJson = jsonDecode(await File(resultFile).readAsString());
-        report = DeploymentReport.fromJson(reportJson as Map<String, dynamic>);
-      } on FileSystemException catch (error) {
-        _appendOutput(
-          'ERROR: Could not read deployment summary: ${error.message}',
-        );
-      } on FormatException catch (error) {
-        _appendOutput('ERROR: Invalid deployment summary: ${error.message}');
-      }
-      report ??= _failedRetryReport(target);
       _appendReportScriptStatuses(report);
       if (!mounted) return report;
       final targetResult = report.pcs.firstWhere(
@@ -1293,7 +1136,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
         orElse: () => _failedRetryReport(target).pcs.single,
       );
       setState(() {
-        if (report!.logFile.isNotEmpty) _detailedLogPath = report.logFile;
+        if (report.logFile.isNotEmpty) _detailedLogPath = report.logFile;
         if (refreshDeploymentArea) {
           _pcProgress = {
             ..._pcProgress,
@@ -1303,8 +1146,8 @@ class _DeploymentPageState extends State<DeploymentPage> {
         }
       });
       return report;
-    } on ProcessException catch (error) {
-      _appendOutput(error.message, onProgress: onProgress);
+    } on Object catch (error) {
+      _appendOutput('ERROR: $error', onProgress: onProgress);
       if (refreshDeploymentArea && mounted) {
         final failedResult = _failedRetryReport(target).pcs.single;
         setState(() {
@@ -1326,20 +1169,12 @@ class _DeploymentPageState extends State<DeploymentPage> {
     }
     FocusManager.instance.primaryFocus?.unfocus();
     final root = _projectRootController.text.trim();
-    final python = _cleanExecutable(_pythonController.text);
     final workers = int.tryParse(_workersController.text.trim());
-    final orchestrator = File(_join(root, 'Monitoring_Orchestrator.py'));
     final targetFile = File(_join(root, 'targets.txt'));
     final directTargets = _directTargets();
 
-    if (!orchestrator.existsSync()) {
-      _showMessage(
-        'Monitoring_Orchestrator.py was not found in the project root.',
-      );
-      return;
-    }
-    if (python.isEmpty) {
-      _showMessage('Enter a Python executable or command.');
+    if (!File(_join(root, 'utility_scripts\\MonitorTarget.ps1')).existsSync()) {
+      _showMessage('utility_scripts\\MonitorTarget.ps1 was not found.');
       return;
     }
     if (workers == null || workers < 1) {
@@ -1362,25 +1197,6 @@ class _DeploymentPageState extends State<DeploymentPage> {
       _showMessage('No target PCs were provided.');
       return;
     }
-    final resultFile = _join(
-      _join(root, 'logs'),
-      'monitor-result-${DateTime.now().millisecondsSinceEpoch}.json',
-    );
-    final arguments = <String>[
-      orchestrator.path,
-      '--max-workers',
-      workers.toString(),
-      '--result-file',
-      resultFile,
-    ];
-    if (_targetSource == TargetSource.file) {
-      arguments.addAll(['--targets-file', targetFile.path]);
-    } else {
-      for (final target in targets) {
-        arguments.addAll(['--target', target]);
-      }
-    }
-
     setState(() {
       _isMonitoring = true;
       _monitorStatus = 'Monitoring ${targets.length} target(s)…';
@@ -1388,76 +1204,52 @@ class _DeploymentPageState extends State<DeploymentPage> {
       _monitorCompletedTargets = const {};
       _monitorResults = const [];
       _monitorFilter = MonitoringFilter.all;
+      _monitorStopRequested = false;
     });
 
+    final orchestrator = NativeOrchestrator(
+      projectRoot: root,
+      maxWorkers: workers,
+      onMonitoringProgress: (pc) {
+        if (!mounted) return;
+        setState(() {
+          _monitorCompletedTargets = {..._monitorCompletedTargets, pc};
+        });
+      },
+    );
+    _monitoringOrchestrator = orchestrator;
     try {
-      final process = await Process.start(
-        python,
-        arguments,
-        workingDirectory: root,
-        runInShell: false,
+      final report = MonitoringReport.fromJson(
+        await orchestrator.monitor(targets),
       );
-      _monitorProcess = process;
-      if (!mounted) {
-        process.kill();
-        return;
-      }
-      _monitorStdoutSubscription = process.stdout
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())
-          .listen((line) {
-            if (!mounted) return;
-            const marker = 'MONITOR_PROGRESS ';
-            if (!line.startsWith(marker)) return;
-            final pc = line.substring(marker.length).trim();
-            if (pc.isEmpty) return;
-            setState(() {
-              _monitorCompletedTargets = {..._monitorCompletedTargets, pc};
-            });
-          });
-      _monitorStderrSubscription = process.stderr
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())
-          .listen((_) {});
-      final exitCode = await process.exitCode;
-      await _monitorStdoutSubscription?.cancel();
-      await _monitorStderrSubscription?.cancel();
       if (!mounted) return;
-
-      MonitoringReport? report;
-      try {
-        final reportJson = jsonDecode(await File(resultFile).readAsString());
-        report = MonitoringReport.fromJson(reportJson as Map<String, dynamic>);
-      } on FileSystemException catch (error) {
-        _showMessage('Could not read monitoring results: ${error.message}');
-      } on FormatException catch (error) {
-        _showMessage('Invalid monitoring results: ${error.message}');
-      }
       setState(() {
-        _monitorProcess = null;
+        _monitoringOrchestrator = null;
         _isMonitoring = false;
-        _monitorResults = report?.pcs ?? const [];
-        if (report != null) {
-          _monitorCompletedTargets = _monitorTargets.toSet();
-        }
-        _monitorStatus = exitCode == 0 && report != null
-            ? 'Monitoring complete'
-            : 'Monitoring exited with code $exitCode';
+        _monitorResults = report.pcs;
+        _monitorCompletedTargets = _monitorTargets.toSet();
+        _monitorStatus = _monitorStopRequested
+            ? 'Monitoring stopped'
+            : 'Monitoring complete';
       });
-    } on ProcessException catch (error) {
+    } on Object catch (error) {
       if (!mounted) return;
       setState(() {
-        _monitorProcess = null;
+        _monitoringOrchestrator = null;
         _isMonitoring = false;
         _monitorStatus = 'Could not start monitoring';
       });
-      _showMessage(error.message);
+      _showMessage('$error');
     }
   }
 
   void _stopMonitoring() {
-    if (_monitorProcess?.kill() ?? false) {
-      setState(() => _monitorStatus = 'Stopping monitoring…');
+    if (_monitoringOrchestrator != null) {
+      _monitoringOrchestrator!.cancel();
+      setState(() {
+        _monitorStopRequested = true;
+        _monitorStatus = 'Stopping monitoring…';
+      });
     } else {
       _showMessage('The monitoring process could not be stopped.');
     }
@@ -1541,8 +1333,8 @@ class _DeploymentPageState extends State<DeploymentPage> {
   }
 
   void _stopDeployment() {
-    final stopped = _process?.kill() ?? false;
-    if (stopped) {
+    if (_deploymentOrchestrator != null) {
+      _deploymentOrchestrator!.cancel();
       setState(() {
         _stopRequested = true;
         _status = 'Stopping deployment…';
@@ -2430,29 +2222,14 @@ class _DeploymentPageState extends State<DeploymentPage> {
               ),
             ),
             const SizedBox(height: 12),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: TextField(
-                    key: const Key('pythonField'),
-                    controller: _pythonController,
-                    enabled: !_controlsLocked,
-                    decoration: const InputDecoration(
-                      labelText: 'Python command',
-                      hintText: 'python',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                OutlinedButton.icon(
-                  key: const Key('loadConfigButton'),
-                  onPressed: _controlsLocked ? null : _loadConfig,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Load config.py'),
-                ),
-              ],
+            Align(
+              alignment: Alignment.centerRight,
+              child: OutlinedButton.icon(
+                key: const Key('loadConfigButton'),
+                onPressed: _controlsLocked ? null : _loadConfig,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Load config.py defaults'),
+              ),
             ),
             const SizedBox(height: 16),
             Text(
