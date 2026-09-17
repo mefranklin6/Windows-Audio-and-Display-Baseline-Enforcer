@@ -42,7 +42,7 @@ CloseApplications=yes
 RestartApplications=no
 
 [Files]
-Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "wade_orchestrator.exe"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#RepoRoot}\installer_scripts\*"; DestDir: "{#AppDataDir}\installer_scripts"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#RepoRoot}\utility_scripts\*"; DestDir: "{#AppDataDir}\utility_scripts"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#RepoRoot}\targets.txt.example"; DestDir: "{#AppDataDir}"; Flags: ignoreversion

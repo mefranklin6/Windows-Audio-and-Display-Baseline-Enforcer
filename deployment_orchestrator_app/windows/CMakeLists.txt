@@ -2,9 +2,10 @@
 cmake_minimum_required(VERSION 3.14)
 project(windows_av_baseline_enforcer LANGUAGES CXX)
 
-# The name of the executable created for the application. Change this to change
-# the on-disk name of your application.
-set(BINARY_NAME "Windows-Audio-and-Display-Baseline-Enforcer-Orchestrator")
+# Keep the CMake target short so Visual Studio's generated file-tracking paths
+# stay below the Windows path limit. The release executable is renamed below.
+set(BINARY_NAME "wade_orchestrator")
+set(RELEASE_BINARY_NAME "Windows-Audio-and-Display-Baseline-Enforcer-Orchestrator")
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
@@ -51,6 +52,17 @@ add_subdirectory(${FLUTTER_MANAGED_DIR})
 
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
+
+# Flutter reads BINARY_NAME to locate a development build. Keep a short
+# compatibility copy for `flutter run`, while the release binary uses the
+# product name used by the installer and Windows metadata.
+set_target_properties(${BINARY_NAME} PROPERTIES
+  OUTPUT_NAME "${RELEASE_BINARY_NAME}")
+add_custom_command(TARGET ${BINARY_NAME} POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "$<TARGET_FILE:${BINARY_NAME}>"
+    "$<TARGET_FILE_DIR:${BINARY_NAME}>/${BINARY_NAME}.exe"
+  VERBATIM)
 
 
 # Generated plugin build rules, which manage building the plugins and adding
