@@ -42,7 +42,7 @@ If you plan on deploying remotely, make sure your workstation has the proper per
 ### Run the precompiled .exe (recommended)
 
 1. Open the [latest GitHub Release](https://github.com/mefranklin6/Windows-Audio-and-Display-Baseline-Enforcer/releases/latest).
-2. Download and run `Windows-Audio-and-Display-Baseline-Enforcer-<version>-Setup.exe`. The installer contains the app, PowerShell scripts, and support files; cloning this repository is not required.
+2. Download and run `Windows-Audio-and-Display-Baseline-Enforcer-Orchestrator-<version>-Setup.exe`. The installer contains the app, PowerShell scripts, and support files; cloning this repository is not required.
 3. Start the app from the Start menu or desktop shortcut.
 4. Enter computer names directly, or create a UTF-8 plain-text file with one target per line and select it in the app.
 
@@ -61,7 +61,7 @@ flutter pub get
 flutter build windows --release
 ```
 
-The compiled bundle is written to `deployment_orchestrator_app\build\windows\x64\runner\Release`. Keep the executable, DLLs, `data` directory, and other generated files together. Also keep the bundle inside the repository or place `installer_scripts`, `utility_scripts`, and `BGInfo` beside it; the Flutter executable alone is not a portable build.
+The compiled bundle is written to `deployment_orchestrator_app\build\windows\x64\runner\Release`. Keep `Windows-Audio-and-Display-Baseline-Enforcer-Orchestrator.exe`, the DLLs, the `data` directory, and the other generated files together. Also keep the bundle inside the repository or place `installer_scripts`, `utility_scripts`, and `BGInfo` beside it; the Flutter executable alone is not a portable build.
 
 Official tagged builds use [the Windows build workflow](.github/workflows/build-windows.yml) and [the Inno Setup definition](installer/windows-setup.iss) to package the complete bundle and PowerShell files into one downloadable installer.
 
