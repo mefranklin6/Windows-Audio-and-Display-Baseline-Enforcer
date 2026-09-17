@@ -18,7 +18,7 @@ class JsonSettingsStore implements SettingsStore {
     return JsonSettingsStore(
       File(
         '$applicationData${Platform.pathSeparator}'
-        'Windows Audio and Display Baseline Enforcer${Platform.pathSeparator}'
+        'Windows Audio and Display Baseline Enforcer Orchestrator${Platform.pathSeparator}'
         'settings.json',
       ),
     );

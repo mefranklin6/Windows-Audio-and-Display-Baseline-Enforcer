@@ -68,13 +68,13 @@ jobs:
           & $iscc "/DAppVersion=$version" "/DSourceDir=$sourceDir" "/DRepoRoot=$repoRoot" "/DOutputDir=$outputDir" '..\installer\windows-setup.iss'
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE." }
 
-          $setup = Join-Path $outputDir "Windows-Audio-and-Display-Baseline-Enforcer-$version-Setup.exe"
+          $setup = Join-Path $outputDir "Windows-Audio-and-Display-Baseline-Enforcer-Orchestrator-$version-Setup.exe"
           if (-not (Test-Path -LiteralPath $setup)) { throw "Installer was not created at $setup." }
           $checksum = "$setup.sha256"
           $hash = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $(Split-Path -Leaf $setup)" | Set-Content -LiteralPath $checksum -Encoding ascii
 
-          "name=Windows-Audio-and-Display-Baseline-Enforcer-$version" >> $env:GITHUB_OUTPUT
+          "name=Windows-Audio-and-Display-Baseline-Enforcer-Orchestrator-$version" >> $env:GITHUB_OUTPUT
           "setup=$setup" >> $env:GITHUB_OUTPUT
           "checksum=$checksum" >> $env:GITHUB_OUTPUT
 

@@ -331,7 +331,7 @@ class _DeploymentOrchestratorAppState extends State<DeploymentOrchestratorApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Deployment Orchestrator',
+      title: 'Windows Audio and Display Baseline Enforcer Orchestrator',
       theme: buildAppTheme(Brightness.light),
       darkTheme: buildAppTheme(Brightness.dark),
       highContrastTheme: buildAppTheme(Brightness.light, highContrast: true),
@@ -805,14 +805,19 @@ class _DeploymentPageState extends State<DeploymentPage> {
     super.initState();
     final settings = widget.initialSettings;
     final savedRoot = settings?['project_root'] as String?;
-    final projectRoot = savedRoot?.trim().isNotEmpty == true
-        ? savedRoot!.trim()
+    final projectRoot =
+        savedRoot?.trim().isNotEmpty == true &&
+            _isProjectRoot(savedRoot!.trim()) &&
+            !_isLegacyInstallPath(savedRoot.trim())
+        ? savedRoot.trim()
         : _findProjectRoot();
     _projectRootController = TextEditingController(text: projectRoot);
     final savedTargetsFile = settings?['targets_file'] as String?;
     _targetsFilePathController = TextEditingController(
-      text: savedTargetsFile?.trim().isNotEmpty == true
-          ? savedTargetsFile!.trim()
+      text:
+          savedTargetsFile?.trim().isNotEmpty == true &&
+              !_isLegacyInstallPath(savedTargetsFile!.trim())
+          ? savedTargetsFile.trim()
           : _join(projectRoot, 'targets.txt'),
     );
     _targetsController.text = settings?['direct_targets'] as String? ?? '';
@@ -899,15 +904,17 @@ class _DeploymentPageState extends State<DeploymentPage> {
     final starts = <String>{
       Directory.current.absolute.path,
       File(Platform.resolvedExecutable).parent.absolute.path,
+      if (Platform.environment['APPDATA'] case final appData?)
+        _join(
+          appData,
+          'Windows Audio and Display Baseline Enforcer Orchestrator',
+        ),
     };
 
     for (final start in starts) {
       var directory = Directory(start);
       for (var level = 0; level < 8; level++) {
-        if (File(_join(directory.path, 'utility_scripts\\MonitorTarget.ps1'))
-                .existsSync() &&
-            Directory(_join(directory.path, 'installer_scripts'))
-                .existsSync()) {
+        if (_isProjectRoot(directory.path)) {
           return directory.path;
         }
         final parent = directory.parent;
@@ -916,6 +923,23 @@ class _DeploymentPageState extends State<DeploymentPage> {
       }
     }
     return Directory.current.absolute.path;
+  }
+
+  bool _isProjectRoot(String path) =>
+      File(_join(path, 'utility_scripts\\MonitorTarget.ps1')).existsSync() &&
+      Directory(_join(path, 'installer_scripts')).existsSync();
+
+  bool _isLegacyInstallPath(String path) {
+    final localAppData = Platform.environment['LOCALAPPDATA'];
+    if (localAppData == null || localAppData.isEmpty) return false;
+    final legacyRoot = _join(
+      _join(localAppData, 'Programs'),
+      'Windows Audio and Display Baseline Enforcer',
+    );
+    final normalizedPath = File(path).absolute.path.toLowerCase();
+    final normalizedRoot = Directory(legacyRoot).absolute.path.toLowerCase();
+    return normalizedPath == normalizedRoot ||
+        normalizedPath.startsWith('$normalizedRoot${Platform.pathSeparator}');
   }
 
   String _join(String parent, String child) =>
@@ -2193,7 +2217,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
                   Semantics(
                     header: true,
                     child: Text(
-                      'Deployment Orchestrator',
+                      'Windows Audio and Display Baseline Enforcer Orchestrator',
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         fontWeight: FontWeight.w700,
                         letterSpacing: -0.2,

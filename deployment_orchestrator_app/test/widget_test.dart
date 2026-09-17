@@ -48,7 +48,10 @@ void main() {
     await tester.pumpWidget(testApp());
     await tester.pump();
 
-    expect(find.text('Deployment Orchestrator'), findsWidgets);
+    expect(
+      find.text('Windows Audio and Display Baseline Enforcer Orchestrator'),
+      findsWidgets,
+    );
     expect(find.byKey(const Key('audioRecallSwitch')), findsOneWidget);
     expect(find.byKey(const Key('displayRecallSwitch')), findsOneWidget);
     expect(find.byKey(const Key('bgInfoSwitch')), findsOneWidget);

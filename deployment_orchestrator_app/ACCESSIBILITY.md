@@ -1,6 +1,6 @@
 # Accessibility readiness
 
-The Deployment Orchestrator targets WCAG 2.2 Level AA and the applicable software criteria in Revised Section 508. This document records engineering support and remaining validation work; it is not an Accessibility Conformance Report (ACR) and does not by itself establish conformance.
+Windows Audio and Display Baseline Enforcer Orchestrator targets WCAG 2.2 Level AA and the applicable software criteria in Revised Section 508. This document records engineering support and remaining validation work; it is not an Accessibility Conformance Report (ACR) and does not by itself establish conformance.
 
 ## Implemented support
 

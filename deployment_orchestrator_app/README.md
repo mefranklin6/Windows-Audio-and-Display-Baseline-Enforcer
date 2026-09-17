@@ -1,10 +1,10 @@
-# Deployment Orchestrator app
+# Windows Audio and Display Baseline Enforcer Orchestrator
 
 ## Install and run the released app
 
-Download `Windows-Audio-and-Display-Baseline-Enforcer-<version>-Setup.exe` from the [latest GitHub Release](https://github.com/mefranklin6/Windows-Audio-and-Display-Baseline-Enforcer/releases/latest), then run it. The installer includes the compiled application, Flutter runtime, and PowerShell/support files. A repository checkout, Python, and Flutter are not required.
+Download `Windows-Audio-and-Display-Baseline-Enforcer-Orchestrator-<version>-Setup.exe` from the [latest GitHub Release](https://github.com/mefranklin6/Windows-Audio-and-Display-Baseline-Enforcer/releases/latest), then run it. The installer includes the compiled application, Flutter runtime, and PowerShell/support files. A repository checkout, Python, and Flutter are not required.
 
-The installer creates a per-user Start menu entry and can create a desktop shortcut. It also preserves `%APPDATA%\Windows Audio and Display Baseline Enforcer\settings.json` when a newer installer is applied. Use the update button in the application toolbar to compare the installed version with the latest GitHub Release and open the newer installer.
+The installer places the application and required Flutter runtime files in `Program Files\Windows Audio and Display Baseline Enforcer Orchestrator`. Scripts, targets, BGInfo assets, logs, and settings are stored in `%APPDATA%\Windows Audio and Display Baseline Enforcer Orchestrator`. It creates a Start menu entry and can create a desktop shortcut. Use the update button in the application toolbar to compare the installed version with the latest GitHub Release and open the newer installer.
 
 ## Run from source
 
@@ -28,7 +28,7 @@ flutter pub get
 flutter build windows --release
 ```
 
-The raw Windows bundle is created at `build\windows\x64\runner\Release`. Keep every generated file in that directory together; `deployment_orchestrator_app.exe` alone is not portable. To run that bundle, keep it within the repository or place `installer_scripts`, `utility_scripts`, and `BGInfo` beside it.
+The raw Windows bundle is created at `build\windows\x64\runner\Release`. Keep every generated file in that directory together; `Windows-Audio-and-Display-Baseline-Enforcer-Orchestrator.exe` alone is not portable. To run that bundle, keep it within the repository or place `installer_scripts`, `utility_scripts`, and `BGInfo` beside it.
 
 To make the same single-file installer used by CI, install [Inno Setup](https://jrsoftware.org/isinfo.php) and run this from `deployment_orchestrator_app` after building:
 
@@ -70,6 +70,6 @@ git push origin v1.0.0
 
 The deployment workstation needs Windows PowerShell plus the administrative permissions, WinRM connectivity, and administrative-share access required by the root [README](../README.md). Target computers need internet access when the deployment scripts install pinned PowerShell modules from GitHub.
 
-Target files must be UTF-8 text with one hostname per line. Blank lines and lines beginning with `#` are allowed. Settings are stored in `%APPDATA%\Windows Audio and Display Baseline Enforcer\settings.json`; timestamped deployment and monitoring logs are written to `logs` under the application-files directory.
+Target files must be UTF-8 text with one hostname per line. Blank lines and lines beginning with `#` are allowed. Settings are stored in `%APPDATA%\Windows Audio and Display Baseline Enforcer Orchestrator\settings.json`; timestamped deployment and monitoring logs are written to `logs` under the application-files directory.
 
 For BGInfo deployments, add a folder directly under `BGInfo` containing exactly one `BGInfo64.exe`, one `.bgi` configuration file, and one supported background image (`.jpg`, `.jpeg`, `.png`, `.bmp`, or `.gif`). Select that folder in Settings.
