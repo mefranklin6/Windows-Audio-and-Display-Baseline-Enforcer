@@ -53,16 +53,11 @@ add_subdirectory(${FLUTTER_MANAGED_DIR})
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
 
-# Flutter reads BINARY_NAME to locate a development build. Keep a short
-# compatibility copy for `flutter run`, while the release binary uses the
-# product name used by the installer and Windows metadata.
+# The release binary uses the product name used by the installer and Windows
+# metadata. The runner CMake file creates a short compatibility copy for
+# `flutter run`.
 set_target_properties(${BINARY_NAME} PROPERTIES
   OUTPUT_NAME "${RELEASE_BINARY_NAME}")
-add_custom_command(TARGET ${BINARY_NAME} POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "$<TARGET_FILE:${BINARY_NAME}>"
-    "$<TARGET_FILE_DIR:${BINARY_NAME}>/${BINARY_NAME}.exe"
-  VERBATIM)
 
 
 # Generated plugin build rules, which manage building the plugins and adding

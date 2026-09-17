@@ -16,6 +16,14 @@ add_executable(${BINARY_NAME} WIN32
   "runner.exe.manifest"
 )
 
+# Flutter locates development builds by BINARY_NAME. Keep a short copy for
+# `flutter run` while the target's primary output uses RELEASE_BINARY_NAME.
+add_custom_command(TARGET ${BINARY_NAME} POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "$<TARGET_FILE:${BINARY_NAME}>"
+    "$<TARGET_FILE_DIR:${BINARY_NAME}>/${BINARY_NAME}.exe"
+  VERBATIM)
+
 # Apply the standard set of build settings. This can be removed for applications
 # that need different build settings.
 apply_standard_settings(${BINARY_NAME})
