@@ -2,13 +2,15 @@
 
 A deterministic audio and display baseline enforcement system for shared Windows PCs.
 
-## Target Audience
+## Overview
+
+### Target Audience
 
 - Administrators of shared computers installed in conference rooms, classrooms, or similar environments.
 - Admins or owners of computers installed as part of complex AV systems, including home theaters.
 - Admins or owners of computers used as kiosks or digital signage.
 
-## Goals
+### Goals
 
 This system is designed to keep audio and display configuration stable and predictable.
 
@@ -21,30 +23,26 @@ Windows and users often change audio and display configuration in shared environ
 
 > Optional: This system can also deploy Sysinternals [BGInfo](https://learn.microsoft.com/en-us/sysinternals/downloads/bginfo) to write information over the desktop wallpaper at login. This is useful for showing who is logged in and for displaying asset or service tag information that helps users submit support tickets.
 
-## App-Based Deployment and Monitoring
+### App-Based Deployment and Monitoring
 
 Use the included Windows App to deploy and monitor this project with minimal permissions, dependencies, and hassle. No SCCM, Intune, programming languages, or other device management systems are needed.
 
 ![image of app](/images/app_image.png)
 
-## Modular Architecture
+### Modular Architecture
 
 This system is modular, so you can choose which features and installers to deploy. You can either directly run scripts under `\installer_scripts` , or use the recommended Windows Flutter app to install and monitor a selected set of scripts across multiple computers.
 
-## Requirements
+### Requirements
 
 If you plan on deploying remotely, make sure your workstation has the proper permissions and WinRM is working by running the below in PowerShell:
 
 `Test-WSMan -ComputerName <name of a remote PC>`
 
-## Orchestrated Deployment Method (recommended)
-
-### Run the precompiled .exe (recommended)
+## Quickstart: Precompiled Install Wizard (recommended)
 
 1. Open the [latest GitHub Release](https://github.com/mefranklin6/Windows-Audio-and-Display-Baseline-Enforcer/releases/latest).
-2. Download and run `Windows-Audio-and-Display-Baseline-Enforcer-Orchestrator-<version>-Setup.exe`. The installer contains the app, PowerShell scripts, and support files; cloning this repository is not required.
-3. Start the app from the Start menu or desktop shortcut.
-4. Enter computer names directly, or create a UTF-8 plain-text file with one target per line and select it in the app.
+2. Download and run `Windows-Audio-and-Display-Baseline-Enforcer-Orchestrator-<version>-Setup.exe`
 
 ***...and that's it! If this method works for you, feel free to stop reading here and start using the app.***
 
@@ -182,6 +180,13 @@ The Powershell scripts that are the core of the backend, and the old Python orch
 The new front-end GUI, or 'App' was almost entirely 'vibe coded', but tested, and the parts that touch anything important were reviewed manually. Front-end, aesthetic, and UX elements are developed quickly by prompting AI, and these less important aspects are not as strictly reviewed. AI has also developed integration tests for changes to the GUI.
 
 ## Release Changelog
+
+### v3.1.0
+
+17 September 2026
+
+- Refinements to the installation and uninstallation process
+- Consistent use of naming in the app
 
 ### v3.0.0b
 
