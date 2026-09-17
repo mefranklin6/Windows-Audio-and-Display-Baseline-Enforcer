@@ -229,6 +229,57 @@ void main() {
     expect(pc['audio_device_cmdlets_versions'], isEmpty);
   });
 
+  test(
+    'uninstall runs utility script and monitoring loads its record',
+    () async {
+      final uninstallExecutor = FakeCommandExecutor(
+        (_, _) async =>
+            const CommandResult(exitCode: 0, stdout: 'INFO: Removed CTS files'),
+      );
+      final uninstall = NativeOrchestrator(
+        projectRoot: projectRoot.path,
+        maxWorkers: 1,
+        executor: uninstallExecutor,
+        clock: () => DateTime.utc(2026, 9, 17, 12),
+      );
+
+      final uninstallReport = await uninstall.uninstall(['PC-004']);
+      final uninstallResult =
+          (uninstallReport['pcs'] as List<dynamic>).single
+              as Map<String, dynamic>;
+      expect(uninstallResult['success'], isTrue);
+      expect(
+        uninstallExecutor.calls.single,
+        contains(endsWith(r'utility_scripts\uninstall.ps1')),
+      );
+
+      final record = File(
+        '${projectRoot.path}${Platform.pathSeparator}logs'
+        '${Platform.pathSeparator}uninstall_records'
+        '${Platform.pathSeparator}pc-004.json',
+      );
+      expect(record.existsSync(), isTrue);
+
+      final monitor = NativeOrchestrator(
+        projectRoot: projectRoot.path,
+        maxWorkers: 1,
+        executor: FakeCommandExecutor(
+          (_, _) async => const CommandResult(
+            exitCode: 0,
+            stdout:
+                '{"pc":"PC-004","online":true,"winrm":true,'
+                '"cts_deployed":false}',
+          ),
+        ),
+      );
+      final monitorReport = await monitor.monitor(['PC-004']);
+      final monitoredPc =
+          (monitorReport['pcs'] as List<dynamic>).single
+              as Map<String, dynamic>;
+      expect(monitoredPc['uninstall_recorded_at'], isNotEmpty);
+    },
+  );
+
   test('honors the worker limit while preserving target order', () async {
     var active = 0;
     var maximumActive = 0;

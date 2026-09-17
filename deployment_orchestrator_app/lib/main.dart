@@ -366,6 +366,7 @@ enum MonitoringFilter {
   missingDeployment,
   missingAudioConfiguration,
   missingDisplayConfiguration,
+  missingAudioOrDisplayConfiguration,
   missingLogoutShortcut,
   missingRebootShortcut,
   missingBgInfo,
@@ -439,6 +440,7 @@ class MonitoringPcResult {
     required this.audioDeviceCmdletsVersions,
     required this.displayConfigVersions,
     required this.deploymentIntent,
+    required this.uninstallRecordedAt,
   });
 
   factory MonitoringPcResult.fromJson(Map<String, dynamic> json) {
@@ -470,6 +472,7 @@ class MonitoringPcResult {
               json['deployment_intent'] as Map<String, dynamic>,
             )
           : null,
+      uninstallRecordedAt: json['uninstall_recorded_at'] as String? ?? '',
     );
   }
 
@@ -491,6 +494,46 @@ class MonitoringPcResult {
   final List<String> audioDeviceCmdletsVersions;
   final List<String> displayConfigVersions;
   final DeploymentIntent? deploymentIntent;
+  final String uninstallRecordedAt;
+
+  bool get isUninstalled => uninstallRecordedAt.isNotEmpty && !ctsDeployed;
+}
+
+class UninstallReport {
+  const UninstallReport({required this.logFile, required this.pcs});
+
+  factory UninstallReport.fromJson(Map<String, dynamic> json) =>
+      UninstallReport(
+        logFile: json['log_file'] as String? ?? '',
+        pcs: (json['pcs'] as List<dynamic>? ?? const [])
+            .map(
+              (item) =>
+                  UninstallPcResult.fromJson(item as Map<String, dynamic>),
+            )
+            .toList(),
+      );
+
+  final String logFile;
+  final List<UninstallPcResult> pcs;
+}
+
+class UninstallPcResult {
+  const UninstallPcResult({
+    required this.pc,
+    required this.success,
+    required this.error,
+  });
+
+  factory UninstallPcResult.fromJson(Map<String, dynamic> json) =>
+      UninstallPcResult(
+        pc: json['pc'] as String? ?? 'Unknown PC',
+        success: json['success'] as bool? ?? false,
+        error: json['error'] as String? ?? '',
+      );
+
+  final String pc;
+  final bool success;
+  final String error;
 }
 
 List<TextSpan> buildSeveritySpans(String text) {
@@ -728,12 +771,14 @@ class _DeploymentPageState extends State<DeploymentPage> {
   bool _addDesktopShortcuts = true;
   bool _isRunning = false;
   bool _isMonitoring = false;
+  bool _isUninstalling = false;
   bool _isUpdatingTargetsFile = false;
   bool _stopRequested = false;
   bool _monitorStopRequested = false;
   bool _checkingForUpdates = false;
   NativeOrchestrator? _deploymentOrchestrator;
   NativeOrchestrator? _monitoringOrchestrator;
+  NativeOrchestrator? _uninstallOrchestrator;
   String _output = '';
   String _status = 'Ready';
   String? _detailedLogPath;
@@ -743,6 +788,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
   Set<String> _finishedTargets = const {};
   Map<String, List<ScriptDeploymentResult>> _scriptResultsByPc = const {};
   String _monitorStatus = 'Ready';
+  String _uninstallStatus = 'Ready';
   List<String> _monitorTargets = const [];
   Set<String> _monitorCompletedTargets = const {};
   List<MonitoringPcResult> _monitorResults = const [];
@@ -752,7 +798,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
   Timer? _settingsSaveTimer;
   bool _restoreBgInfoInstall = false;
 
-  bool get _controlsLocked => _isRunning || _isMonitoring;
+  bool get _controlsLocked => _isRunning || _isMonitoring || _isUninstalling;
 
   @override
   void initState() {
@@ -806,6 +852,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
     }
     _deploymentOrchestrator?.cancel();
     _monitoringOrchestrator?.cancel();
+    _uninstallOrchestrator?.cancel();
     _projectRootController.dispose();
     _targetsFilePathController.dispose();
     _targetsController.dispose();
@@ -1862,6 +1909,124 @@ class _DeploymentPageState extends State<DeploymentPage> {
     }
   }
 
+  Future<void> _confirmUninstall() async {
+    if (_controlsLocked) {
+      _showMessage('Wait for the current operation to finish.');
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded),
+            SizedBox(width: 10),
+            Text('Uninstall from selected PCs?'),
+          ],
+        ),
+        content: const Text(
+          'This removes CTS configuration, PowerShell modules, startup files, '
+          'BGInfo files, and CTS desktop shortcuts from every selected PC. '
+          'This action cannot be undone automatically.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const Key('confirmUninstallButton'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+              foregroundColor: Theme.of(dialogContext).colorScheme.onError,
+            ),
+            child: const Text('Uninstall'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) await _startUninstall();
+  }
+
+  Future<void> _startUninstall() async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    final root = _projectRootController.text.trim();
+    final workers = int.tryParse(_workersController.text.trim());
+    final directTargets = _directTargets();
+
+    if (!File(_join(root, 'utility_scripts\\uninstall.ps1')).existsSync()) {
+      _showMessage('utility_scripts\\uninstall.ps1 was not found.');
+      return;
+    }
+    if (workers == null || workers < 1) {
+      _showMessage('Maximum workers must be a whole number of at least 1.');
+      return;
+    }
+    if (_targetSource == TargetSource.direct && directTargets.isEmpty) {
+      _showMessage('Enter at least one target PC.');
+      return;
+    }
+
+    final List<String> targets;
+    if (_targetSource == TargetSource.direct) {
+      targets = directTargets;
+    } else {
+      final fileTargets = await _loadValidatedTargets();
+      if (fileTargets == null) return;
+      targets = fileTargets;
+    }
+    if (targets.isEmpty) {
+      _showMessage('No target PCs were provided.');
+      return;
+    }
+
+    setState(() {
+      _isUninstalling = true;
+      _uninstallStatus = 'Uninstalling ${targets.length} target(s)…';
+      _detailedLogPath = null;
+    });
+    final orchestrator = NativeOrchestrator(
+      projectRoot: root,
+      maxWorkers: workers,
+      onLog: (line) => _appendOutput(line, updateProgress: false),
+    );
+    _uninstallOrchestrator = orchestrator;
+    try {
+      final report = UninstallReport.fromJson(
+        await orchestrator.uninstall(targets),
+      );
+      if (!mounted) return;
+      final failures = report.pcs.where((result) => !result.success).length;
+      setState(() {
+        _uninstallOrchestrator = null;
+        _isUninstalling = false;
+        _detailedLogPath = report.logFile;
+        _uninstallStatus = failures == 0
+            ? 'Uninstall finished successfully'
+            : 'Uninstall finished with issues ($failures failed)';
+      });
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _uninstallOrchestrator = null;
+        _isUninstalling = false;
+        _uninstallStatus = 'Could not start uninstall';
+      });
+      _appendOutput('ERROR: $error', updateProgress: false);
+    }
+  }
+
+  void _stopUninstall() {
+    final orchestrator = _uninstallOrchestrator;
+    if (orchestrator == null) {
+      _showMessage('The uninstall process could not be stopped.');
+      return;
+    }
+    orchestrator.cancel();
+    setState(() => _uninstallStatus = 'Stopping uninstall…');
+  }
+
   DeploymentReport _failedRetryReport(String target) {
     return DeploymentReport(
       logFile: '',
@@ -2415,22 +2580,22 @@ class _DeploymentPageState extends State<DeploymentPage> {
   String _monitoringFilterLabel(MonitoringFilter filter) {
     return switch (filter) {
       MonitoringFilter.all => 'All PCs',
-      MonitoringFilter.failedChecks => 'All PCs With Failed Checks',
-      MonitoringFilter.offline => 'All Offline PCs',
-      MonitoringFilter.winRmUnavailable => 'All PCs With WinRM Unavailable',
-      MonitoringFilter.missingDeployment => 'All PCs Missing CTS Deployment',
+      MonitoringFilter.failedChecks => 'Failed Checks',
+      MonitoringFilter.offline => 'Offline PCs',
+      MonitoringFilter.winRmUnavailable => 'WinRM Unavailable',
+      MonitoringFilter.missingDeployment => 'Missing CTS Deployment',
       MonitoringFilter.missingAudioConfiguration =>
-        'All PCs Missing Audio Configuration',
+        'Missing Audio Configuration',
       MonitoringFilter.missingDisplayConfiguration =>
-        'All PCs Missing Display Configuration',
-      MonitoringFilter.missingLogoutShortcut =>
-        'All PCs Missing Log Out Shortcut',
-      MonitoringFilter.missingRebootShortcut =>
-        'All PCs Missing Reboot Shortcut',
-      MonitoringFilter.missingBgInfo => 'All PCs Missing BGInfo Deployment',
+        'Missing Display Configuration',
+      MonitoringFilter.missingAudioOrDisplayConfiguration =>
+        'Missing Audio or Display Configuration',
+      MonitoringFilter.missingLogoutShortcut => 'Missing Log Out Shortcut',
+      MonitoringFilter.missingRebootShortcut => 'Missing Reboot Shortcut',
+      MonitoringFilter.missingBgInfo => 'Missing BGInfo Deployment',
       MonitoringFilter.missingAudioDeviceCmdlets =>
-        'All PCs Missing AudioDeviceCmdlets',
-      MonitoringFilter.missingDisplayConfig => 'All PCs Missing DisplayConfig',
+        'Missing AudioDeviceCmdlets',
+      MonitoringFilter.missingDisplayConfig => 'Missing DisplayConfig',
     };
   }
 
@@ -2511,6 +2676,9 @@ class _DeploymentPageState extends State<DeploymentPage> {
         audioStatus == MonitoringComponentStatus.missing,
       MonitoringFilter.missingDisplayConfiguration =>
         displayStatus == MonitoringComponentStatus.missing,
+      MonitoringFilter.missingAudioOrDisplayConfiguration =>
+        audioStatus == MonitoringComponentStatus.missing ||
+            displayStatus == MonitoringComponentStatus.missing,
       MonitoringFilter.missingLogoutShortcut =>
         logoutStatus == MonitoringComponentStatus.missing,
       MonitoringFilter.missingRebootShortcut =>
@@ -2533,6 +2701,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
       return MonitoringComponentStatus.unknown;
     }
     if (present) return MonitoringComponentStatus.present;
+    if (result.isUninstalled) return MonitoringComponentStatus.notDeployed;
     if (intended == false) return MonitoringComponentStatus.notDeployed;
     return MonitoringComponentStatus.missing;
   }
@@ -2559,6 +2728,12 @@ class _DeploymentPageState extends State<DeploymentPage> {
       overallColor = _pcProgressColor(PcProgress.error);
       overallIcon = Icons.error;
       overallLabel = 'WinRM unavailable';
+    } else if (result.isUninstalled) {
+      overallColor = _monitoringStatusColor(
+        MonitoringComponentStatus.notDeployed,
+      );
+      overallIcon = Icons.delete_outline;
+      overallLabel = 'Uninstalled';
     } else if (!result.ctsDeployed) {
       overallColor = _pcProgressColor(PcProgress.warning);
       overallIcon = Icons.warning_amber_rounded;
@@ -2702,6 +2877,13 @@ class _DeploymentPageState extends State<DeploymentPage> {
                 if (intent != null && intent.recordedAt.isNotEmpty) ...[
                   Text(
                     'Latest recorded deployment: ${intent.recordedAt}',
+                    style: Theme.of(dialogContext).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                if (result.isUninstalled) ...[
+                  Text(
+                    'Uninstall recorded: ${result.uninstallRecordedAt}',
                     style: Theme.of(dialogContext).textTheme.bodySmall,
                   ),
                   const SizedBox(height: 12),
@@ -3458,6 +3640,12 @@ class _DeploymentPageState extends State<DeploymentPage> {
                       label: 'Monitoring',
                       status: _monitorStatus,
                     ),
+                    const SizedBox(height: 4),
+                    _buildOperationStatus(
+                      icon: Icons.delete_outline,
+                      label: 'Uninstall',
+                      status: _uninstallStatus,
+                    ),
                   ],
                 );
                 final actions = _buildOperationActions();
@@ -3540,11 +3728,20 @@ class _DeploymentPageState extends State<DeploymentPage> {
           children: [
             Icon(icon, size: 18, color: Theme.of(context).colorScheme.primary),
             const SizedBox(width: 8),
-            Text(
-              '$label: ',
-              style: const TextStyle(fontWeight: FontWeight.w600),
+            Expanded(
+              child: Text.rich(
+                TextSpan(
+                  children: [
+                    TextSpan(
+                      text: '$label: ',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    TextSpan(text: status),
+                  ],
+                ),
+                key: statusKey,
+              ),
             ),
-            Expanded(child: Text(status, key: statusKey)),
           ],
         ),
       ),
@@ -3568,23 +3765,41 @@ class _DeploymentPageState extends State<DeploymentPage> {
         label: const Text('Stop monitoring'),
       );
     }
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        OutlinedButton.icon(
-          key: const Key('startMonitoringButton'),
-          onPressed: _startMonitoring,
-          icon: const Icon(Icons.monitor_heart_rounded, size: 20),
-          label: const Text('Monitor'),
-        ),
-        FilledButton.icon(
-          key: const Key('deployButton'),
-          onPressed: _startDeployment,
-          icon: const Icon(Icons.rocket_launch_rounded, size: 20),
-          label: const Text('Deploy'),
-        ),
-      ],
+    if (_isUninstalling) {
+      return OutlinedButton.icon(
+        key: const Key('stopUninstallButton'),
+        onPressed: _stopUninstall,
+        icon: const Icon(Icons.stop),
+        label: const Text('Stop uninstall'),
+      );
+    }
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 360),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        alignment: WrapAlignment.end,
+        children: [
+          OutlinedButton.icon(
+            key: const Key('startMonitoringButton'),
+            onPressed: _startMonitoring,
+            icon: const Icon(Icons.monitor_heart_rounded, size: 20),
+            label: const Text('Monitor'),
+          ),
+          OutlinedButton.icon(
+            key: const Key('uninstallButton'),
+            onPressed: _confirmUninstall,
+            icon: const Icon(Icons.delete_outline, size: 20),
+            label: const Text('Uninstall'),
+          ),
+          FilledButton.icon(
+            key: const Key('deployButton'),
+            onPressed: _startDeployment,
+            icon: const Icon(Icons.rocket_launch_rounded, size: 20),
+            label: const Text('Deploy'),
+          ),
+        ],
+      ),
     );
   }
 }

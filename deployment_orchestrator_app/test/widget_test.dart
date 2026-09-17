@@ -55,6 +55,7 @@ void main() {
     expect(find.byKey(const Key('shortcutsSwitch')), findsOneWidget);
     expect(find.byKey(const Key('deployButton')), findsOneWidget);
     expect(find.byKey(const Key('startMonitoringButton')), findsOneWidget);
+    expect(find.byKey(const Key('uninstallButton')), findsOneWidget);
     expect(find.byIcon(Icons.monitor_heart_rounded), findsOneWidget);
     expect(find.byIcon(Icons.rocket_launch_rounded), findsOneWidget);
     expect(find.byType(TabBar), findsNothing);
@@ -459,6 +460,9 @@ void main() {
       find.byKey(const Key('startMonitoringButton')),
     );
     final deploy = tester.getSemantics(find.byKey(const Key('deployButton')));
+    final uninstall = tester.getSemantics(
+      find.byKey(const Key('uninstallButton')),
+    );
     final settings = tester.getSemantics(
       find.byKey(const Key('settingsButton')),
     );
@@ -466,9 +470,27 @@ void main() {
     expect(monitor.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
     expect(deploy.label, contains('Deploy'));
     expect(deploy.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
+    expect(uninstall.label, contains('Uninstall'));
+    expect(uninstall.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
     expect(settings.label, contains('Settings'));
     expect(settings.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
     semanticsHandle.dispose();
+  });
+
+  testWidgets('warns before uninstalling selected PCs', (tester) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(testApp());
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('uninstallButton')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Uninstall from selected PCs?'), findsOneWidget);
+    expect(find.byKey(const Key('confirmUninstallButton')), findsOneWidget);
+    expect(find.text('Cancel'), findsOneWidget);
   });
 
   testWidgets('remains usable at 200 percent text scaling', (tester) async {
@@ -667,5 +689,22 @@ void main() {
     expect(report.pcs.single.audioDeviceCmdletsVersions, ['3.2', '3.3']);
     expect(report.pcs.single.deploymentIntent?.audioRecall, isFalse);
     expect(report.pcs.single.deploymentIntent?.displayRecall, isTrue);
+    expect(report.pcs.single.isUninstalled, isFalse);
+  });
+
+  test('recognizes an uninstall record when CTS is absent', () {
+    final report = MonitoringReport.fromJson({
+      'pcs': [
+        {
+          'pc': 'PC-REMOVED',
+          'online': true,
+          'winrm': true,
+          'cts_deployed': false,
+          'uninstall_recorded_at': '2026-09-17T12:00:00-07:00',
+        },
+      ],
+    });
+
+    expect(report.pcs.single.isUninstalled, isTrue);
   });
 }

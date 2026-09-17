@@ -186,6 +186,37 @@ class NativeOrchestrator {
     }
   }
 
+  Future<Map<String, dynamic>> uninstall(List<String> targets) async {
+    _validate(targets);
+    final normalizedTargets = _deduplicateTargets(targets);
+    final logFile = await _openLog('uninstall-');
+    try {
+      _log('INFO', 'Starting remote uninstall run');
+      _log(
+        'INFO',
+        'Targets: ${normalizedTargets.length}; maximum concurrent targets: $maxWorkers',
+      );
+      final results = await _parallelMap(normalizedTargets, (pc) async {
+        try {
+          return await _uninstallTarget(pc);
+        } on Object catch (error, stackTrace) {
+          _log('ERROR', '$pc: Unexpected uninstall failure: $error');
+          _log('DEBUG', '$pc: $stackTrace');
+          return <String, dynamic>{
+            'pc': pc,
+            'success': false,
+            'error': 'Unexpected uninstall failure: $error',
+          };
+        }
+      });
+      _log('INFO', 'Remote uninstall run complete');
+      _log('INFO', 'Detailed log: ${logFile.absolute.path}');
+      return {'log_file': logFile.absolute.path, 'pcs': results};
+    } finally {
+      await _closeLog();
+    }
+  }
+
   void _validate(List<String> targets, {DeploymentOptions? options}) {
     if (maxWorkers < 1) {
       throw ArgumentError.value(maxWorkers, 'maxWorkers', 'must be at least 1');
@@ -356,6 +387,64 @@ class NativeOrchestrator {
     return result;
   }
 
+  Future<Map<String, dynamic>> _uninstallTarget(String pc) async {
+    if (executor.isCancelled) {
+      return <String, dynamic>{
+        'pc': pc,
+        'success': false,
+        'error': 'Uninstall cancelled.',
+      };
+    }
+
+    _log('INFO', '$pc: Uninstall started');
+    final completed = await _safeRun(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        _join(projectRoot, 'utility_scripts\\uninstall.ps1'),
+        pc,
+        'true',
+      ],
+      pc: pc,
+      action: 'Uninstall',
+    );
+    if (completed == null) {
+      return <String, dynamic>{
+        'pc': pc,
+        'success': false,
+        'error': 'Could not start uninstall script.',
+      };
+    }
+    for (final (output, defaultLevel) in [
+      (completed.stdout, 'INFO'),
+      (completed.stderr, 'ERROR'),
+    ]) {
+      for (final line in const LineSplitter().convert(output)) {
+        if (line.trim().isEmpty) continue;
+        _log(defaultLevel, '$pc: ${line.trim()}');
+      }
+    }
+    if (completed.exitCode != 0) {
+      final error = completed.stderr.trim().isNotEmpty
+          ? completed.stderr.trim()
+          : 'Uninstall script exited with code ${completed.exitCode}.';
+      _log('ERROR', '$pc: Uninstall failed');
+      return <String, dynamic>{'pc': pc, 'success': false, 'error': error};
+    }
+
+    try {
+      await _writeUninstallRecord(pc);
+    } on FileSystemException catch (error) {
+      _log('WARNING', '$pc: Could not save uninstall record: ${error.message}');
+    }
+    _log('INFO', '$pc: Uninstall complete');
+    return <String, dynamic>{'pc': pc, 'success': true, 'error': ''};
+  }
+
   Map<String, dynamic> _fatalDeploymentResult(String pc, String message) {
     return <String, dynamic>{
       'pc': pc,
@@ -504,7 +593,28 @@ class NativeOrchestrator {
         const JsonEncoder.withIndent('  ').convert(payload),
       );
       await temporary.rename(file.path);
+      final uninstallRecord = File(
+        _join(
+          _join(_join(projectRoot, 'logs'), 'uninstall_records'),
+          _recordName(pc),
+        ),
+      );
+      if (await uninstallRecord.exists()) await uninstallRecord.delete();
     }
+  }
+
+  Future<void> _writeUninstallRecord(String pc) async {
+    final directory = Directory(
+      _join(_join(projectRoot, 'logs'), 'uninstall_records'),
+    );
+    await directory.create(recursive: true);
+    final file = File(_join(directory.path, _recordName(pc)));
+    final temporary = File('${file.path}.$pid.tmp');
+    await temporary.writeAsString(
+      const JsonEncoder.withIndent(' ')
+          .convert({'pc': pc, 'recorded_at': _clock().toIso8601String()}),
+    );
+    await temporary.rename(file.path);
   }
 
   Future<Map<String, dynamic>> _inspectTarget(String pc) async {
@@ -547,6 +657,7 @@ class NativeOrchestrator {
             jsonDecode(outputLines.last) as Map,
           );
           result['deployment_intent'] = await _loadDeploymentIntent(pc);
+          result['uninstall_recorded_at'] = await _loadUninstallRecord(pc);
           final status = result['online'] != true
               ? 'offline'
               : result['winrm'] == true
@@ -591,6 +702,7 @@ class NativeOrchestrator {
       'audio_device_cmdlets_versions': <String>[],
       'display_config_versions': <String>[],
       'deployment_intent': await _loadDeploymentIntent(pc),
+      'uninstall_recorded_at': await _loadUninstallRecord(pc),
     };
   }
 
@@ -604,6 +716,25 @@ class NativeOrchestrator {
     try {
       final decoded = jsonDecode(await file.readAsString());
       return decoded is Map<String, dynamic> ? decoded : null;
+    } on FileSystemException {
+      return null;
+    } on FormatException {
+      return null;
+    }
+  }
+
+  Future<String?> _loadUninstallRecord(String pc) async {
+    final file = File(
+      _join(
+        _join(_join(projectRoot, 'logs'), 'uninstall_records'),
+        _recordName(pc),
+      ),
+    );
+    try {
+      final decoded = jsonDecode(await file.readAsString());
+      return decoded is Map<String, dynamic>
+          ? decoded['recorded_at'] as String?
+          : null;
     } on FileSystemException {
       return null;
     } on FormatException {
