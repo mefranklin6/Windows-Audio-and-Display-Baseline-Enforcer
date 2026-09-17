@@ -21,51 +21,53 @@ Windows and users often change audio and display configuration in shared environ
 
 > Optional: This system can also deploy Sysinternals [BGInfo](https://learn.microsoft.com/en-us/sysinternals/downloads/bginfo) to write information over the desktop wallpaper at login. This is useful for showing who is logged in and for displaying asset or service tag information that helps users submit support tickets.
 
+## App-Based Deployment and Monitoring
+
+Use the included Windows App to deploy and monitor this project with minimal permissions, dependencies, and hassle. No SCCM, Intune, programming languages, or other device management systems are needed.
+
+![image of app](/images/app_image.png)
+
 ## Modular Architecture
 
-This system is modular, so you can choose which features and installers to deploy. You can either run scripts under `installer_scripts` directly, or use the recommended  `Deployment_Orchestrator.py` to install a selected set of scripts across multiple computers.
+This system is modular, so you can choose which features and installers to deploy. You can either directly run scripts under `\installer_scripts` , or use the recommended Windows Flutter app to install and monitor a selected set of scripts across multiple computers.
 
-## Usage
+## Requirements
 
-Both the deployment orchestrator script and individual scripts can target local or remote PC's via WinRM. If you plan on deploying remotely, make sure your workstation has the proper permissions and WinRM is working:
+If you plan on deploying remotely, make sure your workstation has the proper permissions and WinRM is working by running the below in PowerShell:
 
 `Test-WSMan -ComputerName <name of a remote PC>`
 
-### Individual Script Deployment Method
+## Orchestrated Deployment Method (recommended)
 
-This method is best used for testing or very small deployments. With this method, there is no additional setup or dependencies required. Simply run the PowerShell script you need from the `installer_scripts` folder. When prompted for a target PC, provide a remote hostname or `localhost` to install locally.
+### Run the precompiled .exe (recommended)
 
-See [Individual Scripts](#individual-scripts) for details about what each script does.
+1. Open the [latest GitHub Release](https://github.com/mefranklin6/Windows-Audio-and-Display-Baseline-Enforcer/releases/latest).
+2. Download and run `Windows-Audio-and-Display-Baseline-Enforcer-<version>-Setup.exe`. The installer contains the app, PowerShell scripts, and support files; cloning this repository is not required.
+3. Start the app from the Start menu or desktop shortcut.
+4. Enter computer names directly, or create a UTF-8 plain-text file with one target per line and select it in the app.
 
-### Orchestrated Deployment Method (recommended)
+***...and that's it! If this method works for you, feel free to stop reading here and start using the app.***
 
-- Requires Python 3.14 or later on an administration workstation or server. This project currently uses only the standard library.
+Note: This method will likely trigger a Windows Smart Screen warning, but you can safely proceed to run the program. If you don't trust the .exe or if you want to bypass Smart Screen altogether, you can follow the instructions below to compile your own exe from source.
 
-If you plan to deploy BGInfo, place the latest `BGInfo64.exe`, one `.bgi` file, and one background image in the folder configured by `$folder` in `InstallBGInfo.ps1`. The script scans `BGInfo\<folder>` and requires exactly one match for each asset type.
+### Compile the app yourself (optional)
 
-## Deployment Orchestrator
-
-The deploy script processes multiple target PCs concurrently. For each target PC, it runs the selected installer scripts in the order listed in `pwsh_scripts`. For normal deployments, this is the only file you need to run.
-
-### Setup
-
-0. Clone this repository to your admin workstation. The 'main' branch is the most up-to-date but may not always be fully tested, so you may wish to use a [release version](https://github.com/mefranklin6/Windows-Audio-and-Display-Baseline-Enforcer/releases). You can find a changelog at the end of this readme.
-1. Create `targets.txt` in the repository root (use `targets.txt.example` as a reference).
-2. Add one PC target per line in `targets.txt`.
-3. Create and configure `config.py` in the repository root. You can copy `config.py.example`.
-
-Run:
+Use this path when you want a local release build from source. It requires Git, the Flutter SDK, Visual Studio with the Desktop development with C++ workload, and a clone of this repository.
 
 ```powershell
-cd <to your repo root>
-python .\Deployment_Orchestrator.py
+git clone https://github.com/mefranklin6/Windows-Audio-and-Display-Baseline-Enforcer.git
+cd .\Windows-Audio-and-Display-Baseline-Enforcer\deployment_orchestrator_app
+flutter pub get
+flutter build windows --release
 ```
 
-### Flutter GUI (optional)
+The compiled bundle is written to `deployment_orchestrator_app\build\windows\x64\runner\Release`. Keep the executable, DLLs, `data` directory, and other generated files together. Also keep the bundle inside the repository or place `installer_scripts`, `utility_scripts`, and `BGInfo` beside it; the Flutter executable alone is not a portable build.
 
-The Windows Flutter app in `deployment_orchestrator_app` exposes the same feature flags and BGInfo folder from `config.py`, plus the deployment worker limit. It can preview and edit `targets.txt`, or accept hostnames directly without changing that file. Feature settings selected in the GUI apply to that run only and leave `config.py` unchanged. The interface also includes light and dark themes, per-PC log filtering, detailed log viewing, targeted retries, and a Monitoring tab for auditing deployed CTS artifacts and PowerShell module versions.
+Official tagged builds use [the Windows build workflow](.github/workflows/build-windows.yml) and [the Inno Setup definition](installer/windows-setup.iss) to package the complete bundle and PowerShell files into one downloadable installer.
 
-To run it with Flutter installed:
+### Develop and test the app
+
+Use this path when changing the Dart UI, orchestration code, PowerShell scripts, or tests. After cloning the repository and installing the build prerequisites, run:
 
 ```powershell
 cd .\deployment_orchestrator_app
@@ -73,13 +75,23 @@ flutter pub get
 flutter run -d windows
 ```
 
-See the [app README](deployment_orchestrator_app/README.md) for build and runtime details.
+Before submitting changes, format and validate the project:
 
-The Python orchestrator also accepts these overrides directly. Run `python .\Deployment_Orchestrator.py --help` for the full list; repeat `--target HOSTNAME` to bypass `targets.txt` from the command line.
+```powershell
+dart format lib test
+flutter analyze
+flutter test
+```
 
-#### Deployment Notes
+Development builds locate `installer_scripts` and `utility_scripts` from the repository automatically. See the [app README](deployment_orchestrator_app/README.md) for additional implementation and runtime details.
 
-- Each line in `targets.txt` should contain one hostname.
+## Individual Script Deployment Method
+
+This method is best used for testing or very small deployments. With this method, there is no additional setup or dependencies required. Simply run the PowerShell script you need from the `installer_scripts` folder. When prompted for a target PC, provide a remote hostname or `localhost` to install locally.
+
+It also may be possible to load or modify these scripts for use in Intune or other management programs.
+
+See [Individual Scripts](#individual-scripts) for details about what each script does.
 
 ## Individual Scripts
 
@@ -130,9 +142,11 @@ It performs the following:
 
 #### BGInfo Usage
 
-- Place the required BGInfo assets in `BGInfo\<folder>`, where `<folder>` matches the `$folder` value in your `config.py`.
-- That folder must contain exactly one `BGInfo64.exe`, exactly one `.bgi` file, and exactly one supported image file (`.jpg`, `.jpeg`, `.png`, `.bmp`, or `.gif`). Note: you can keep multiple folders for different backgrounds and styles, but only what's specified in `config.py` will be deployed.
+- Place the required BGInfo assets in a directory under `BGInfo`, then select that directory in the app.
+- That folder must contain exactly one `BGInfo64.exe`, exactly one `.bgi` file, and exactly one supported image file (`.jpg`, `.jpeg`, `.png`, `.bmp`, or `.gif`). You can keep multiple folders for different backgrounds and styles, but only the folder selected in the app is deployed.
 - Include `InstallBGInfo.ps1` in `pwsh_scripts` only on systems where you want BGInfo applied at login.
+
+![bginfo desktop example](/images/bginfo.png)
 
 ### Cleanup Script
 
@@ -151,12 +165,40 @@ The `SAVE_AV_SETTINGS.bat` file is placed on the Public Desktop, requires admin 
 
 Adds `Log Out` and `Reboot` shortcuts to the public desktop, which recall proper AV settings before proceeding. These shortcuts requires all of the above scripts except the BGInfo script to already be installed.
 
+### Uninstall Script
+
+Removes all shortcuts, cmdlets, files, and settings from the target PC.
+
 ## Notes
 
 - The startup script is fast and lightweight, but Windows may take several seconds after login to execute Startup-folder items. Users may also briefly see a blank command prompt window (which is immediately minimized) before the saved settings are applied.
 - It is best practice to hide the power options in the start menu and direct users to the `Reboot` and `Log Out` desktop shortcuts so AV settings are recalled at logout.
+- If using the precompiled .exe, Windows may show a Smart Screen warning. If you don't trust the executable, you can bypass this warning and [compile the program yourself from source](#compile-the-app-yourself-optional).
+
+## AI Disclosure
+
+The Powershell scripts that are the core of the backend, and the old Python orchestrator files that became the basis for the app, were either developed before AI became useful, or AI was used as a tool with strict human review. These are the files that actually modify the PC's, and they have been thoroughly tested and reviewed. These systems have been in-production without issue.
+
+The new front-end GUI, or 'App' was almost entirely 'vibe coded', but tested, and the parts that touch anything important were reviewed manually. Front-end, aesthetic, and UX elements are developed quickly by prompting AI, and these less important aspects are not as strictly reviewed. AI has also developed integration tests for changes to the GUI.
 
 ## Release Changelog
+
+### v3.0.0b
+
+17 September 2026 Beta
+
+- Major changes: Configuration, deployment, and monitoring are now achieved through a GUI app, significantly reducing complexity and hassle on administrators and reducing the barrier to entry.
+
+New features that the app brings:
+
+- One-click installation and configuration
+- Monitoring with built-in retry
+- Batch Uninstalling
+- Development tests
+- Update checking
+- Log filtering
+- Reporting
+- Ability to use multiple target files
 
 ### v2.0.3
 
@@ -177,7 +219,7 @@ Adds `Log Out` and `Reboot` shortcuts to the public desktop, which recall proper
 
 4 May 2026
 
-- Backwards incompatible change: Move feature flags and script-specific params to the new `config.py`
+- Backwards incompatible change: Move feature flags and script-specific parameters to a shared configuration file (removed in a later app release).
 - Bump DisplayConfig version to 6.0.1
 - Modify `Reboot` and `Log Out` shortcuts to instantly display the user a message saying they will be logged out shortly.
 

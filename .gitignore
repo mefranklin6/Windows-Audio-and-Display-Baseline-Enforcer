@@ -223,4 +223,6 @@ __marimo__/
 *.jpeg
 *.png
 *.bmp
-config.py
+
+# Don't ignore png's in images folder (used for readme)
+!/images/**/*.png

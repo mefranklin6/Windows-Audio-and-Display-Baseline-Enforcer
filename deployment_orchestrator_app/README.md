@@ -1,46 +1,75 @@
 # Deployment Orchestrator app
 
-A small Windows Flutter interface for `Deployment_Orchestrator.py`.
+## Install and run the released app
 
-The app lets an administrator:
+Download `Windows-Audio-and-Display-Baseline-Enforcer-<version>-Setup.exe` from the [latest GitHub Release](https://github.com/mefranklin6/Windows-Audio-and-Display-Baseline-Enforcer/releases/latest), then run it. The installer includes the compiled application, Flutter runtime, and PowerShell/support files. A repository checkout, Python, and Flutter are not required.
 
-- load all feature defaults from the repository's `config.py`;
-- override audio recall, display recall, BGInfo, the BGInfo folder, and desktop shortcuts for one run;
-- set the maximum number of concurrently processed PCs;
-- preview, edit, and save the repository's `targets.txt`, or enter targets directly without changing that file;
-- switch between light and dark themes (dark is the default);
-- filter deployment output by PC and load the complete timestamped log in the app;
-- review per-script completion statuses in the detailed log;
-- retry a deployment for an individual PC that completed with issues.
-- monitor CTS deployment artifacts and installed PowerShell module versions across the selected PCs.
+The installer creates a per-user Start menu entry and can create a desktop shortcut. It also preserves `%APPDATA%\Windows Audio and Display Baseline Enforcer\settings.json` when a newer installer is applied. Use the update button in the application toolbar to compare the installed version with the latest GitHub Release and open the newer installer.
 
-Feature overrides selected in the app are passed to Python for the current deployment and do not rewrite `config.py`.
+## Run from source
 
-Repository and Python runtime fields, the BGInfo folder, and deployment concurrency are available from the **Settings** button. Saving from the `targets.txt` editor is the only action that rewrites `targets.txt`; direct-entry deployments leave it unchanged.
+Install the Flutter SDK with Windows desktop support and Visual Studio with the **Desktop development with C++** workload. Clone the repository, then run the application from this directory:
 
-Normal runs show compact visual progress for each PC. The raw output is available on demand in the **Open detailed log** modal, where its PC list can be searched and its entries can be filtered by PC. Selecting a PC also shows a separate script-status panel with success, warning, error, or fatal icons above the raw log. The detailed-log history remains available for the lifetime of the app, including logs from retries. Once a PC finishes, its progress tile includes icon-only actions to open that PC's filtered log or retry it.
+```powershell
+git clone https://github.com/mefranklin6/Windows-Audio-and-Display-Baseline-Enforcer.git
+cd .\Windows-Audio-and-Display-Baseline-Enforcer\deployment_orchestrator_app
+flutter pub get
+flutter run -d windows
+```
 
-After a run finishes, PCs with only informational output are shown as complete. PCs with a failed ping test are shown as blue **Offline** tiles. Script-level outcomes are appended to the detailed log, and each completed PC tile provides icon-only log and retry actions.
+Source builds search parent directories for `installer_scripts` and `utility_scripts\MonitorTarget.ps1`. If the application cannot find them, set **Application files** in Settings to the repository root.
 
-The **Monitoring** tab runs read-only checks through `Monitoring_Orchestrator.py` and `utility_scripts\MonitorTarget.ps1`. It reports whether `C:\ProgramData\CTS` exists, whether audio and display profiles have been saved, whether both public-desktop shortcuts exist, whether all BGInfo assets and either its standalone or consolidated startup launcher are deployed, and every installed AudioDeviceCmdlets and DisplayConfig module version. Monitoring reports can be filtered by any failed check and copied as newline-separated PC lists. The progress bar advances as each target finishes inspection; raw monitoring logs are not shown in the GUI.
+## Build a local release
 
-## Run in development
+From this directory:
 
-Install Flutter with Windows desktop support and Visual Studio's **Desktop development with C++** workload. From this directory, run:
+```powershell
+flutter pub get
+flutter build windows --release
+```
+
+The raw Windows bundle is created at `build\windows\x64\runner\Release`. Keep every generated file in that directory together; `deployment_orchestrator_app.exe` alone is not portable. To run that bundle, keep it within the repository or place `installer_scripts`, `utility_scripts`, and `BGInfo` beside it.
+
+To make the same single-file installer used by CI, install [Inno Setup](https://jrsoftware.org/isinfo.php) and run this from `deployment_orchestrator_app` after building:
+
+```powershell
+$repoRoot = (Resolve-Path ..).Path
+$releaseDir = (Resolve-Path .\build\windows\x64\runner\Release).Path
+iscc.exe "/DAppVersion=1.0.0" "/DSourceDir=$releaseDir" "/DRepoRoot=$repoRoot" "/DOutputDir=$repoRoot\dist" ..\installer\windows-setup.iss
+```
+
+Replace `1.0.0` with the version being built. The installer is written to `dist` at the repository root.
+
+## Develop and test
+
+Fetch dependencies and launch the app with hot reload:
 
 ```powershell
 flutter pub get
 flutter run -d windows
 ```
 
-The app searches parent directories for `Deployment_Orchestrator.py`. If it cannot find the repository automatically, enter the repository root in the **Repository root** field. The Python command defaults to `python`; it can also be an absolute path to `python.exe`.
-
-## Build
+Before committing changes, format and validate the code:
 
 ```powershell
-flutter build windows
+dart format lib test
+flutter analyze
+flutter test
 ```
 
-The release bundle is created under `build\windows\x64\runner\Release`. Keep the bundle inside the repository, or use the **Repository root** field to point it to a checkout containing the Python orchestrator and installer assets.
+## Publish a release
 
-The resulting app remains a front end to Python and PowerShell, so the deployment workstation still needs Python and the permissions/WinRM access described in the repository README.
+The [Windows build workflow](../.github/workflows/build-windows.yml) runs on pushed tags in the form `vMAJOR.MINOR.PATCH` or `MAJOR.MINOR.PATCH`. It tests the project, builds the Windows application, packages the installer with Inno Setup, creates or updates the matching GitHub Release, and uploads both the installer and its SHA-256 checksum.
+
+```powershell
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+## Runtime requirements and files
+
+The deployment workstation needs Windows PowerShell plus the administrative permissions, WinRM connectivity, and administrative-share access required by the root [README](../README.md). Target computers need internet access when the deployment scripts install pinned PowerShell modules from GitHub.
+
+Target files must be UTF-8 text with one hostname per line. Blank lines and lines beginning with `#` are allowed. Settings are stored in `%APPDATA%\Windows Audio and Display Baseline Enforcer\settings.json`; timestamped deployment and monitoring logs are written to `logs` under the application-files directory.
+
+For BGInfo deployments, add a folder directly under `BGInfo` containing exactly one `BGInfo64.exe`, one `.bgi` configuration file, and one supported background image (`.jpg`, `.jpeg`, `.png`, `.bmp`, or `.gif`). Select that folder in Settings.
