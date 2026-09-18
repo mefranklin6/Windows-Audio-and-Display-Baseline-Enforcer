@@ -126,14 +126,21 @@ class AudioConfigurationData {
     if (decodedLevels is! Map) {
       throw const FormatException('audio_levels.json must contain an object.');
     }
-    if (decodedDevices is! List) {
+    // PowerShell serializes a single pipeline result as an object, while
+    // multiple results become an array. Treat either shape as a device list.
+    final deviceList = switch (decodedDevices) {
+      List<dynamic> devices => devices,
+      Map _ => <dynamic>[decodedDevices],
+      _ => null,
+    };
+    if (deviceList == null) {
       throw const FormatException(
-        'audio_device_list.json must contain an array.',
+        'audio_device_list.json must contain a device object or an array.',
       );
     }
     return AudioConfigurationData.fromMaps(
       levels: Map<String, dynamic>.from(decodedLevels),
-      devices: decodedDevices,
+      devices: deviceList,
       levelsJson: levelsJson,
       devicesJson: devicesJson,
       log: log,
@@ -188,7 +195,8 @@ class AudioConfigurationData {
   final String? log;
 }
 
-double parseAudioVolume(Object? raw, {required String key}) {
+double? parseAudioVolume(Object? raw, {required String key}) {
+  if (_isUnavailableAudioVolume(raw)) return null;
   final value = switch (raw) {
     num number => number.toDouble(),
     String text => double.tryParse(text.replaceAll('%', '').trim()),
@@ -198,6 +206,13 @@ double parseAudioVolume(Object? raw, {required String key}) {
     throw FormatException('$key must be a number from 0 to 100.');
   }
   return value;
+}
+
+bool _isUnavailableAudioVolume(Object? raw) {
+  if (raw is! List || !raw.contains(null)) return false;
+  return raw.whereType<String>().any(
+    (message) => message.trimLeft().startsWith('No value found for'),
+  );
 }
 
 abstract interface class AudioConfigurationGateway {
@@ -334,7 +349,7 @@ class _AudioConfigurationDialogState extends State<AudioConfigurationDialog> {
   bool _saving = false;
   bool _editing = false;
   bool _showJson = false;
-  late Map<String, double> _volumes;
+  late Map<String, double?> _volumes;
   late Map<String, bool?> _mutes;
   late Map<String, int?> _deviceSelections;
 
@@ -464,7 +479,8 @@ class _AudioConfigurationDialogState extends State<AudioConfigurationDialog> {
   (String, String) _guiJson() {
     final levels = Map<String, dynamic>.from(_data!.levels);
     for (final key in audioLevelNames.keys) {
-      levels[key] = '${_volumes[key]!.round()}%';
+      final volume = _volumes[key];
+      if (volume != null) levels[key] = '${volume.round()}%';
       final mute = _mutes[key];
       if (mute != null) levels[audioMuteKeys[key]!] = mute;
     }
@@ -653,8 +669,19 @@ class _AudioConfigurationDialogState extends State<AudioConfigurationDialog> {
   }
 
   Widget _buildLevel(String key, String label) {
-    final value = _volumes[key]!;
+    final value = _volumes[key];
     final muted = _mutes[key];
+    if (value == null) {
+      return Row(
+        children: [
+          SizedBox(width: 205, child: Text(label)),
+          const Expanded(
+            child: Text('Unavailable (no device)', textAlign: TextAlign.center),
+          ),
+          const SizedBox(width: 118),
+        ],
+      );
+    }
     return Row(
       children: [
         SizedBox(width: 205, child: Text(label)),

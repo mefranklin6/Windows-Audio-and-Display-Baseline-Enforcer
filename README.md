@@ -181,6 +181,12 @@ The new front-end GUI, or 'App' was almost entirely 'vibe coded', but tested, an
 
 ## Release Changelog
 
+### v3.2.1
+
+18 September 2026
+
+- Fix view audio config details when PC has no recording device
+
 ### v3.2.0
 
 18 September 2026

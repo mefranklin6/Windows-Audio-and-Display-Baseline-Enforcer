@@ -21,6 +21,19 @@ const _legacyLevelsJson = '''{
   "RecordingVolume": "80.99999%"
 }''';
 
+const _noRecordingLevelsJson = '''{
+  "PlaybackCommunicationVolume": "89%",
+  "PlaybackVolume": "89%",
+  "RecordingCommunicationVolume": [
+    "No value found for  Get-AudioDevice -RecordingCommunicationVolume ",
+    null
+  ],
+  "RecordingVolume": [
+    "No value found for  Get-AudioDevice -RecordingVolume ",
+    null
+  ]
+}''';
+
 const _devicesJson = '''[
   {
     "Index": 1,
@@ -51,6 +64,20 @@ const _devicesJson = '''[
     "ID": "recording-1"
   }
 ]''';
+
+const _singleDeviceJson = '''{
+  "Index": 1,
+  "Enabled": true,
+  "Default": true,
+  "DefaultCommunication": true,
+  "Type": "Playback",
+  "Name": "ExtronScalerD (Intel(R) Display Audio)",
+  "ID": "{0.0.0.00000000}.{a9cdc13b-b2c6-49b2-9fd8-5b77256494ce}",
+  "Device": {
+    "AudioSessionManager": {"Sessions": "CoreAudioApi.SessionCollection"},
+    "FriendlyName": "ExtronScalerD (Intel(R) Display Audio)"
+  }
+}''';
 
 class MemoryAudioGateway implements AudioConfigurationGateway {
   String levelsJson = _levelsJson;
@@ -111,6 +138,20 @@ void main() {
     expect(data.devices.first['UnrecognizedField'], 'preserved');
   });
 
+  test('accepts a single audio device object from PowerShell', () {
+    final data = AudioConfigurationData.fromJsonText(
+      levelsJson: _levelsJson,
+      devicesJson: _singleDeviceJson,
+    );
+
+    expect(data.devices, hasLength(1));
+    expect(
+      data.devices.single['Name'],
+      'ExtronScalerD (Intel(R) Display Audio)',
+    );
+    expect(data.devices.single['Device'], isA<Map<String, dynamic>>());
+  });
+
   test('rejects invalid raw volume values', () {
     expect(
       () => AudioConfigurationData.fromJsonText(
@@ -119,6 +160,43 @@ void main() {
       ),
       throwsFormatException,
     );
+  });
+
+  test('accepts unavailable recording volumes when no device exists', () {
+    final data = AudioConfigurationData.fromJsonText(
+      levelsJson: _noRecordingLevelsJson,
+      devicesJson: _singleDeviceJson,
+    );
+
+    expect(
+      parseAudioVolume(data.levels['RecordingVolume'], key: 'RecordingVolume'),
+      isNull,
+    );
+  });
+
+  testWidgets('shows unavailable volumes when no recording device exists', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1100, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final gateway = MemoryAudioGateway()
+      ..levelsJson = _noRecordingLevelsJson
+      ..devicesJson = _singleDeviceJson;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AudioConfigurationDialog(pc: 'PC-NO-INPUT', gateway: gateway),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Could not load'), findsNothing);
+    expect(find.text('Unavailable (no device)'), findsNWidgets(2));
+    expect(find.byKey(const Key('audioVolume-RecordingVolume')), findsNothing);
   });
 
   testWidgets('shows unrecorded legacy mute states as unknown', (tester) async {
