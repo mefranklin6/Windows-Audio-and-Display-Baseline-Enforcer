@@ -98,15 +98,14 @@ TargetFileValidation validateTargetFileContents(String contents) {
   return TargetFileValidation(targets: targets, errors: errors);
 }
 
-const bgInfoFolderHelp = '''BGInfo folder: the name of your folder in BGInfo.
+const bgInfoFolderHelp = '''BGInfo folder: the folder containing your BGInfo assets. It can be located anywhere accessible from this computer.
 
 Place the following in that folder:
 • The latest BGInfo64.exe
 • One .bgi configuration file
 • One compatible image file (.jpg, .jpeg, .png, .bmp, or .gif)
 
-Example: select “25_26” for this structure:
-RepoRoot\\BGInfo\\25_26''';
+Example: C:\\Deployment Assets\\BGInfo\\25_26''';
 
 class BgInfoFolderValidation {
   const BgInfoFolderValidation(this.errors);
@@ -1012,39 +1011,32 @@ class _DeploymentPageState extends State<DeploymentPage> {
     final bgInfoRoot = Directory(
       _join(_projectRootController.text.trim(), 'BGInfo'),
     ).absolute;
-    final selectedPath = await widget.directoryPicker(bgInfoRoot.path);
+    final currentValue = _bgInfoFolderController.text.trim();
+    final initialDirectory = currentValue.isEmpty
+        ? bgInfoRoot.path
+        : _bgInfoDirectory(currentValue).absolute.path;
+    final selectedPath = await widget.directoryPicker(initialDirectory);
     if (selectedPath == null || selectedPath.trim().isEmpty || !mounted) {
       return false;
     }
 
     final selected = Directory(selectedPath).absolute;
-    final expectedParent = _comparablePath(bgInfoRoot.path);
-    final actualParent = _comparablePath(selected.parent.path);
-    if (actualParent != expectedParent) {
-      _showMessage('Select a folder directly inside ${bgInfoRoot.path}.');
-      return false;
-    }
-
-    final folderName = selected.path
-        .replaceAll(RegExp(r'[\\/]+$'), '')
-        .split(RegExp(r'[\\/]'))
-        .last;
-    if (folderName.isEmpty) return false;
     final validation = await widget.bgInfoAssetValidator(selected);
     if (!validation.isValid) {
       if (mounted) await _showBgInfoAssetErrorDialog(validation);
       return false;
     }
-    setState(() => _bgInfoFolderController.text = folderName);
+    setState(() => _bgInfoFolderController.text = selected.path);
     _scheduleSettingsSave();
     return true;
   }
 
-  String _comparablePath(String path) {
-    final normalized = path
-        .replaceAll('/', Platform.pathSeparator)
-        .replaceAll(RegExp(r'[\\/]+$'), '');
-    return Platform.isWindows ? normalized.toLowerCase() : normalized;
+  Directory _bgInfoDirectory(String value) {
+    final directory = Directory(value);
+    if (directory.isAbsolute) return directory;
+    return Directory(
+      _join(_join(_projectRootController.text.trim(), 'BGInfo'), value),
+    );
   }
 
   Future<void> _showBgInfoFolderDialog({
@@ -1127,11 +1119,9 @@ class _DeploymentPageState extends State<DeploymentPage> {
   }
 
   Future<bool> _validateCurrentBgInfoFolder() async {
-    final folderName = _bgInfoFolderController.text.trim();
-    if (folderName.isEmpty) return false;
-    final folder = Directory(
-      _join(_join(_projectRootController.text.trim(), 'BGInfo'), folderName),
-    );
+    final folderPath = _bgInfoFolderController.text.trim();
+    if (folderPath.isEmpty) return false;
+    final folder = _bgInfoDirectory(folderPath);
     final validation = await widget.bgInfoAssetValidator(folder);
     if (validation.isValid) return true;
     if (mounted) await _showBgInfoAssetErrorDialog(validation);
@@ -3164,7 +3154,6 @@ class _DeploymentPageState extends State<DeploymentPage> {
                     decoration: InputDecoration(
                       labelText: 'BGInfo folder',
                       hintText: 'Select a folder',
-                      prefixText: r'BGInfo\',
                       border: const OutlineInputBorder(),
                       suffixIcon: IconButton(
                         key: const Key('bgInfoFolderPickerButton'),

@@ -72,4 +72,4 @@ The deployment workstation needs Windows PowerShell plus the administrative perm
 
 Target files must be UTF-8 text with one hostname per line. Blank lines and lines beginning with `#` are allowed. Settings are stored in `%APPDATA%\Windows Audio and Display Baseline Enforcer Orchestrator\settings.json`; timestamped deployment and monitoring logs are written to `logs` under the application-files directory.
 
-For BGInfo deployments, add a folder directly under `BGInfo` containing exactly one `BGInfo64.exe`, one `.bgi` configuration file, and one supported background image (`.jpg`, `.jpeg`, `.png`, `.bmp`, or `.gif`). Select that folder in Settings.
+For BGInfo deployments, select any accessible folder containing exactly one `BGInfo64.exe`, one `.bgi` configuration file, and one supported background image (`.jpg`, `.jpeg`, `.png`, `.bmp`, or `.gif`).

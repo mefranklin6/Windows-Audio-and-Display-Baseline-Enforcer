@@ -8,7 +8,8 @@ Param(
 )
 
 ###############################################################################
-# Parameter bginfoFolder: the name of your folder in \BGInfo
+# Parameter bginfoFolder: the full path to the folder containing BGInfo assets.
+# Legacy folder names are resolved beneath the repository's \BGInfo directory.
 # Make sure you place the following in that folder:
 #    - The Latest BGInfo64.exe
 #    - Your .bg configuration file
@@ -84,8 +85,13 @@ try {
     else { $prefix = "\\$PC\C$\" }
 
     # --- Repo source paths ---
-    $repo_bginfo_root = Join-Path $PSScriptRoot '..\BGInfo'
-    $repo_bginfo_dir = Join-Path $repo_bginfo_root $bginfoFolder
+    if ([System.IO.Path]::IsPathRooted($bginfoFolder)) {
+        $repo_bginfo_dir = [System.IO.Path]::GetFullPath($bginfoFolder)
+    }
+    else {
+        $repo_bginfo_root = Join-Path $PSScriptRoot '..\BGInfo'
+        $repo_bginfo_dir = Join-Path $repo_bginfo_root $bginfoFolder
+    }
 
     if (-not (Test-Path -LiteralPath $repo_bginfo_dir)) {
         throw "$PC BGInfo folder not found: $repo_bginfo_dir"

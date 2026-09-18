@@ -136,12 +136,15 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     var pickerCalls = 0;
+    String? selectedPath;
 
     await tester.pumpWidget(
       testApp(
         directoryPicker: (initialDirectory) async {
           pickerCalls++;
-          return '$initialDirectory${Platform.pathSeparator}Classroom';
+          selectedPath =
+              '$initialDirectory${Platform.pathSeparator}Classroom';
+          return selectedPath;
         },
         bgInfoAssetValidator: (_) async => const BgInfoFolderValidation.valid(),
       ),
@@ -176,7 +179,7 @@ void main() {
           .widget<TextField>(find.byKey(const Key('bgInfoFolderField')))
           .controller
           ?.text,
-      'Classroom',
+      selectedPath,
     );
     await tester.tap(find.byKey(const Key('bgInfoHelpButton')));
     await tester.pumpAndSettle();
@@ -189,10 +192,13 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
+    final externalFolder = Directory(
+      '${Directory.systemTemp.path}${Platform.pathSeparator}Auditorium',
+    ).absolute;
+
     await tester.pumpWidget(
       testApp(
-        directoryPicker: (initialDirectory) async =>
-            '$initialDirectory${Platform.pathSeparator}Auditorium',
+        directoryPicker: (_) async => externalFolder.path,
         bgInfoAssetValidator: (_) async => const BgInfoFolderValidation.valid(),
       ),
     );
@@ -207,7 +213,7 @@ void main() {
           .widget<TextField>(find.byKey(const Key('bgInfoFolderField')))
           .controller
           ?.text,
-      'Auditorium',
+      externalFolder.path,
     );
   });
 
