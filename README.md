@@ -181,6 +181,12 @@ The new front-end GUI, or 'App' was almost entirely 'vibe coded', but tested, an
 
 ## Release Changelog
 
+### v3.1.1
+
+18 September 2026
+
+- Allow for setting the BGInfo folder from any valid location
+
 ### v3.1.0
 
 17 September 2026
