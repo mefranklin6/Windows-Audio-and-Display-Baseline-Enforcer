@@ -181,6 +181,16 @@ The new front-end GUI, or 'App' was almost entirely 'vibe coded', but tested, an
 
 ## Release Changelog
 
+### v3.2.0
+
+18 September 2026
+
+- Detailed view of display and audio config in monitoring
+- Ability to edit audio config in GUI or the raw JSON
+- Ability to search for a device in monitoring
+- Export PDF or CSV or monitoring report
+- View the PC's Audio Log file from the app
+
 ### v3.1.1
 
 18 September 2026

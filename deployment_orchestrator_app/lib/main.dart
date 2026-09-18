@@ -6,6 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'app_settings.dart';
+import 'audio_configuration.dart';
+import 'display_configuration.dart';
+import 'log_formatting.dart';
+import 'monitoring_report_export.dart';
 import 'native_orchestrator.dart';
 import 'update_checker.dart';
 
@@ -48,6 +52,9 @@ PC-001
 CLASSROOM-02
 # Temporarily excluded
 localhost''';
+
+const missingAvConfigurationHelp =
+    "Ensure that display and audio settings are proper, then run 'SAVE_AV_SETTINGS.bat' either on the public desktop or in C:\\ProgramData\\CTS";
 
 class TargetFileValidation {
   const TargetFileValidation({required this.targets, required this.errors});
@@ -359,6 +366,7 @@ enum PcProgress { queued, running, complete, offline, warning, error, fatal }
 
 enum MonitoringFilter {
   all,
+  healthy,
   failedChecks,
   offline,
   winRmUnavailable,
@@ -374,6 +382,15 @@ enum MonitoringFilter {
 }
 
 enum MonitoringComponentStatus { present, missing, notDeployed, unknown }
+
+bool shouldShowMissingAvConfigurationHelp(
+  MonitoringComponentStatus audioStatus,
+  MonitoringComponentStatus displayStatus,
+) =>
+    audioStatus == MonitoringComponentStatus.missing ||
+    displayStatus == MonitoringComponentStatus.missing;
+
+enum MonitoringExportFormat { csv, pdf }
 
 class DeploymentIntent {
   const DeploymentIntent({
@@ -425,6 +442,7 @@ class MonitoringPcResult {
     required this.online,
     required this.winRm,
     required this.error,
+    required this.scannedAt,
     required this.ctsDeployed,
     required this.audioConfigured,
     required this.displayConfigured,
@@ -438,6 +456,10 @@ class MonitoringPcResult {
     required this.bgInfoStartupMethod,
     required this.audioDeviceCmdletsVersions,
     required this.displayConfigVersions,
+    required this.audioConfiguration,
+    required this.audioConfigurationError,
+    required this.displayConfiguration,
+    required this.displayConfigurationError,
     required this.deploymentIntent,
     required this.uninstallRecordedAt,
   });
@@ -453,6 +475,7 @@ class MonitoringPcResult {
       online: json['online'] as bool? ?? false,
       winRm: json['winrm'] as bool? ?? false,
       error: json['error'] as String? ?? '',
+      scannedAt: json['scanned_at'] as String? ?? '',
       ctsDeployed: json['cts_deployed'] as bool? ?? false,
       audioConfigured: json['audio_configured'] as bool? ?? false,
       displayConfigured: json['display_configured'] as bool? ?? false,
@@ -466,6 +489,18 @@ class MonitoringPcResult {
       bgInfoStartupMethod: json['bginfo_startup_method'] as String? ?? '',
       audioDeviceCmdletsVersions: versions('audio_device_cmdlets_versions'),
       displayConfigVersions: versions('display_config_versions'),
+      audioConfiguration: _parseMonitoredAudioConfiguration(
+        json['audio_configuration'],
+      ),
+      audioConfigurationError:
+          json['audio_configuration_error'] as String? ?? '',
+      displayConfiguration: json['display_configuration'] is Map
+          ? DisplayConfiguration.fromJson(
+              Map<String, dynamic>.from(json['display_configuration'] as Map),
+            )
+          : null,
+      displayConfigurationError:
+          json['display_configuration_error'] as String? ?? '',
       deploymentIntent: json['deployment_intent'] is Map<String, dynamic>
           ? DeploymentIntent.fromJson(
               json['deployment_intent'] as Map<String, dynamic>,
@@ -479,6 +514,7 @@ class MonitoringPcResult {
   final bool online;
   final bool winRm;
   final String error;
+  final String scannedAt;
   final bool ctsDeployed;
   final bool audioConfigured;
   final bool displayConfigured;
@@ -492,10 +528,32 @@ class MonitoringPcResult {
   final String bgInfoStartupMethod;
   final List<String> audioDeviceCmdletsVersions;
   final List<String> displayConfigVersions;
+  final AudioConfigurationData? audioConfiguration;
+  final String audioConfigurationError;
+  final DisplayConfiguration? displayConfiguration;
+  final String displayConfigurationError;
   final DeploymentIntent? deploymentIntent;
   final String uninstallRecordedAt;
 
   bool get isUninstalled => uninstallRecordedAt.isNotEmpty && !ctsDeployed;
+}
+
+AudioConfigurationData? _parseMonitoredAudioConfiguration(Object? raw) {
+  if (raw is! Map) return null;
+  final configuration = Map<String, dynamic>.from(raw);
+  final levels = configuration['levels'];
+  final devices = configuration['devices'];
+  if (levels is! Map || devices is! List) return null;
+  try {
+    return AudioConfigurationData.fromMaps(
+      levels: Map<String, dynamic>.from(levels),
+      devices: devices,
+    );
+  } on FormatException {
+    return null;
+  } on TypeError {
+    return null;
+  }
 }
 
 class UninstallReport {
@@ -536,43 +594,7 @@ class UninstallPcResult {
 }
 
 List<TextSpan> buildSeveritySpans(String text) {
-  final severityPattern = RegExp(
-    r'\b(INFO|WARNING|WARN|ERROR|FATAL|CRITICAL)\b',
-    caseSensitive: false,
-  );
-  final spans = <TextSpan>[];
-  var cursor = 0;
-
-  for (final match in severityPattern.allMatches(text)) {
-    if (match.start > cursor) {
-      spans.add(TextSpan(text: text.substring(cursor, match.start)));
-    }
-    final severity = match.group(0)!;
-    final normalized = severity.toUpperCase();
-    final color = switch (normalized) {
-      'INFO' => const Color(0xff22c55e),
-      'WARNING' || 'WARN' => const Color(0xffff9800),
-      'ERROR' || 'FATAL' || 'CRITICAL' => const Color(0xffef4444),
-      _ => null,
-    };
-    spans.add(
-      TextSpan(
-        text: severity,
-        style: TextStyle(
-          color: color,
-          fontWeight: normalized == 'FATAL' || normalized == 'CRITICAL'
-              ? FontWeight.bold
-              : null,
-        ),
-      ),
-    );
-    cursor = match.end;
-  }
-
-  if (cursor < text.length) {
-    spans.add(TextSpan(text: text.substring(cursor)));
-  }
-  return spans;
+  return buildLogSeveritySpans(text);
 }
 
 String filterDetailedLog(String output, {String? selectedPc}) {
@@ -594,6 +616,51 @@ List<String> filterPcChoices(Iterable<String> pcs, String query) {
             pc.toLowerCase().contains(normalizedQuery),
       )
       .toList();
+}
+
+List<String> monitoringDeviceNames(MonitoringPcResult result) {
+  return <String>[
+    ...?result.audioConfiguration?.devices.map((device) {
+      final name = device['Name'] as String;
+      final type = device['Type'] as String;
+      return '$name ($type)';
+    }),
+    ...?result.displayConfiguration?.monitors.map(
+      (monitor) => '${monitor.label} (Display)',
+    ),
+  ];
+}
+
+bool matchesMonitoringDeviceSearch(MonitoringPcResult result, String query) {
+  final normalizedQuery = query.trim().toLowerCase();
+  if (normalizedQuery.isEmpty) return true;
+  return monitoringDeviceNames(result)
+      .any((device) => device.toLowerCase().contains(normalizedQuery));
+}
+
+bool isHealthyMonitoringResult(MonitoringPcResult result) {
+  if (!result.online ||
+      !result.winRm ||
+      !result.ctsDeployed ||
+      result.isUninstalled) {
+    return false;
+  }
+  final intent = result.deploymentIntent;
+  bool presentOrNotRequested(bool present, bool? requested) =>
+      present || requested == false;
+  return presentOrNotRequested(result.audioConfigured, intent?.audioRecall) &&
+      presentOrNotRequested(result.displayConfigured, intent?.displayRecall) &&
+      presentOrNotRequested(result.logoutShortcut, intent?.desktopShortcuts) &&
+      presentOrNotRequested(result.rebootShortcut, intent?.desktopShortcuts) &&
+      presentOrNotRequested(result.bgInfoDeployed, intent?.bgInfoInstall) &&
+      presentOrNotRequested(
+        result.audioDeviceCmdletsVersions.isNotEmpty,
+        intent?.audioRecall,
+      ) &&
+      presentOrNotRequested(
+        result.displayConfigVersions.isNotEmpty,
+        intent?.displayRecall,
+      );
 }
 
 const allDeploymentScriptNames = <String>[
@@ -757,6 +824,8 @@ class _DeploymentPageState extends State<DeploymentPage> {
       TextEditingController();
   final TextEditingController _monitoringSearchController =
       TextEditingController();
+  final TextEditingController _monitoringDeviceSearchController =
+      TextEditingController();
   final TextEditingController _workersController = TextEditingController(
     text: '10',
   );
@@ -771,6 +840,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
   bool _isRunning = false;
   bool _isMonitoring = false;
   bool _isUninstalling = false;
+  bool _isExportingMonitoringReport = false;
   bool _isUpdatingTargetsFile = false;
   bool _stopRequested = false;
   bool _monitorStopRequested = false;
@@ -794,6 +864,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
   MonitoringFilter _monitorFilter = MonitoringFilter.all;
   String _deploymentSearch = '';
   String _monitoringSearch = '';
+  String _monitoringDeviceSearch = '';
   Timer? _settingsSaveTimer;
   bool _restoreBgInfoInstall = false;
 
@@ -804,12 +875,14 @@ class _DeploymentPageState extends State<DeploymentPage> {
     super.initState();
     final settings = widget.initialSettings;
     final savedRoot = settings?['project_root'] as String?;
+    final sourceProjectRoot = _findSourceProjectRoot();
     final projectRoot =
-        savedRoot?.trim().isNotEmpty == true &&
-            _isProjectRoot(savedRoot!.trim()) &&
-            !_isLegacyInstallPath(savedRoot.trim())
-        ? savedRoot.trim()
-        : _findProjectRoot();
+        sourceProjectRoot ??
+        (savedRoot?.trim().isNotEmpty == true &&
+                _isProjectRoot(savedRoot!.trim()) &&
+                !_isLegacyInstallPath(savedRoot.trim())
+            ? savedRoot.trim()
+            : _findProjectRoot());
     _projectRootController = TextEditingController(text: projectRoot);
     final savedTargetsFile = settings?['targets_file'] as String?;
     _targetsFilePathController = TextEditingController(
@@ -864,6 +937,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
     _bgInfoFolderController.dispose();
     _deploymentSearchController.dispose();
     _monitoringSearchController.dispose();
+    _monitoringDeviceSearchController.dispose();
     _workersController.dispose();
     _pageScrollController.dispose();
     _outputScrollController.dispose();
@@ -924,9 +998,31 @@ class _DeploymentPageState extends State<DeploymentPage> {
     return Directory.current.absolute.path;
   }
 
+  String? _findSourceProjectRoot() {
+    final starts = <String>{
+      Directory.current.absolute.path,
+      File(Platform.resolvedExecutable).parent.absolute.path,
+    };
+    for (final start in starts) {
+      var directory = Directory(start);
+      for (var level = 0; level < 8; level++) {
+        if (_isSourceProjectRoot(directory.path)) return directory.path;
+        final parent = directory.parent;
+        if (parent.path == directory.path) break;
+        directory = parent;
+      }
+    }
+    return null;
+  }
+
   bool _isProjectRoot(String path) =>
       File(_join(path, 'utility_scripts\\MonitorTarget.ps1')).existsSync() &&
       Directory(_join(path, 'installer_scripts')).existsSync();
+
+  bool _isSourceProjectRoot(String path) =>
+      _isProjectRoot(path) &&
+      File(_join(path, 'deployment_orchestrator_app\\pubspec.yaml'))
+          .existsSync();
 
   bool _isLegacyInstallPath(String path) {
     final localAppData = Platform.environment['LOCALAPPDATA'];
@@ -2375,6 +2471,10 @@ class _DeploymentPageState extends State<DeploymentPage> {
     final filteredResults = _monitorResults
         .where((result) => _matchesMonitoringFilter(result, _monitorFilter))
         .where((result) => _matchesPcSearch(result.pc, _monitoringSearch))
+        .where(
+          (result) =>
+              matchesMonitoringDeviceSearch(result, _monitoringDeviceSearch),
+        )
         .toList();
     return Card(
       child: Padding(
@@ -2411,6 +2511,17 @@ class _DeploymentPageState extends State<DeploymentPage> {
                 label: 'Find a monitored PC',
                 choices: _monitorResults.map((result) => result.pc),
                 onChanged: (value) => setState(() => _monitoringSearch = value),
+              ),
+              const SizedBox(height: 10),
+              _buildPcSearchField(
+                key: const Key('monitoringDeviceSearchField'),
+                controller: _monitoringDeviceSearchController,
+                label: 'Find a device',
+                hintText: 'Search audio or display devices',
+                clearTooltip: 'Clear device search',
+                choices: _monitorResults.expand(monitoringDeviceNames).toSet(),
+                onChanged: (value) =>
+                    setState(() => _monitoringDeviceSearch = value),
               ),
               const SizedBox(height: 10),
               LayoutBuilder(
@@ -2450,6 +2561,35 @@ class _DeploymentPageState extends State<DeploymentPage> {
                             : () => _copyMonitoringReport(filteredResults),
                         icon: const Icon(Icons.content_copy_rounded, size: 18),
                         label: const Text('Copy PC list'),
+                      ),
+                      OutlinedButton.icon(
+                        key: const Key('exportMonitoringCsvButton'),
+                        onPressed:
+                            filteredResults.isEmpty ||
+                                _isExportingMonitoringReport
+                            ? null
+                            : () => _exportMonitoringReport(
+                                filteredResults,
+                                MonitoringExportFormat.csv,
+                              ),
+                        icon: const Icon(Icons.table_view_outlined, size: 18),
+                        label: const Text('CSV'),
+                      ),
+                      OutlinedButton.icon(
+                        key: const Key('exportMonitoringPdfButton'),
+                        onPressed:
+                            filteredResults.isEmpty ||
+                                _isExportingMonitoringReport
+                            ? null
+                            : () => _exportMonitoringReport(
+                                filteredResults,
+                                MonitoringExportFormat.pdf,
+                              ),
+                        icon: const Icon(
+                          Icons.picture_as_pdf_outlined,
+                          size: 18,
+                        ),
+                        label: const Text('PDF'),
                       ),
                       FilledButton.tonalIcon(
                         key: const Key('redeployMonitoringReportButton'),
@@ -2546,6 +2686,8 @@ class _DeploymentPageState extends State<DeploymentPage> {
     required String label,
     required Iterable<String> choices,
     required ValueChanged<String> onChanged,
+    String hintText = 'Start typing a PC name',
+    String clearTooltip = 'Clear PC search',
   }) {
     return Autocomplete<String>(
       initialValue: controller.value,
@@ -2565,12 +2707,12 @@ class _DeploymentPageState extends State<DeploymentPage> {
           focusNode: focusNode,
           decoration: InputDecoration(
             labelText: label,
-            hintText: 'Start typing a PC name',
+            hintText: hintText,
             prefixIcon: const Icon(Icons.search),
             suffixIcon: fieldController.text.isEmpty
                 ? null
                 : IconButton(
-                    tooltip: 'Clear PC search',
+                    tooltip: clearTooltip,
                     onPressed: () {
                       fieldController.clear();
                       controller.clear();
@@ -2594,6 +2736,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
   String _monitoringFilterLabel(MonitoringFilter filter) {
     return switch (filter) {
       MonitoringFilter.all => 'All PCs',
+      MonitoringFilter.healthy => 'Healthy',
       MonitoringFilter.failedChecks => 'Failed Checks',
       MonitoringFilter.offline => 'Offline PCs',
       MonitoringFilter.winRmUnavailable => 'WinRM Unavailable',
@@ -2681,6 +2824,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
         componentStatuses.contains(MonitoringComponentStatus.missing);
     return switch (filter) {
       MonitoringFilter.all => true,
+      MonitoringFilter.healthy => isHealthyMonitoringResult(result),
       MonitoringFilter.failedChecks => hasFailedCheck,
       MonitoringFilter.offline => !result.online,
       MonitoringFilter.winRmUnavailable => result.online && !result.winRm,
@@ -2730,6 +2874,215 @@ class _DeploymentPageState extends State<DeploymentPage> {
     );
   }
 
+  Future<void> _exportMonitoringReport(
+    List<MonitoringPcResult> results,
+    MonitoringExportFormat format,
+  ) async {
+    final extension = format.name;
+    final now = DateTime.now();
+    final stamp =
+        '${now.year.toString().padLeft(4, '0')}'
+        '${now.month.toString().padLeft(2, '0')}'
+        '${now.day.toString().padLeft(2, '0')}-'
+        '${now.hour.toString().padLeft(2, '0')}'
+        '${now.minute.toString().padLeft(2, '0')}';
+    try {
+      final location = await getSaveLocation(
+        suggestedName: 'monitoring-report-$stamp.$extension',
+        acceptedTypeGroups: [
+          XTypeGroup(
+            label: format == MonitoringExportFormat.csv
+                ? 'CSV report'
+                : 'PDF report',
+            extensions: [extension],
+          ),
+        ],
+      );
+      if (location == null || !mounted) return;
+      setState(() => _isExportingMonitoringReport = true);
+      final searchParts = <String>[
+        if (_monitoringSearch.trim().isNotEmpty)
+          'PC search: ${_monitoringSearch.trim()}',
+        if (_monitoringDeviceSearch.trim().isNotEmpty)
+          'device search: ${_monitoringDeviceSearch.trim()}',
+      ];
+      final scope = searchParts.isEmpty
+          ? _monitoringFilterLabel(_monitorFilter)
+          : '${_monitoringFilterLabel(_monitorFilter)}; ${searchParts.join('; ')}';
+      final report = MonitoringExportReport(
+        generatedAt: now,
+        scope: scope,
+        entries: results.map(_buildMonitoringExportEntry).toList(),
+      );
+      var path = location.path;
+      if (!path.toLowerCase().endsWith('.$extension')) {
+        path = '$path.$extension';
+      }
+      if (format == MonitoringExportFormat.csv) {
+        await File(path).writeAsString('\uFEFF${buildMonitoringCsv(report)}');
+      } else {
+        await File(path).writeAsBytes(await buildMonitoringPdf(report));
+      }
+      if (!mounted) return;
+      _showMessage('${extension.toUpperCase()} report saved to $path');
+    } on Object catch (error) {
+      if (!mounted) return;
+      _showMessage('Could not export the monitoring report: $error');
+    } finally {
+      if (mounted) setState(() => _isExportingMonitoringReport = false);
+    }
+  }
+
+  MonitoringExportEntry _buildMonitoringExportEntry(MonitoringPcResult result) {
+    final intent = result.deploymentIntent;
+    final audio = result.audioConfiguration;
+    final display = result.displayConfiguration;
+    String check(bool present, bool? intended) => _monitoringStatusLabel(
+      _monitoringComponentStatus(result, present: present, intended: intended),
+    );
+
+    String audioValue(String key) {
+      final value = audio?.levels[key];
+      return value == null ? 'Not available' : '$value';
+    }
+
+    String muteValue(String key) {
+      final value = audio?.levels[key];
+      return value is bool ? (value ? 'Muted' : 'Unmuted') : 'Unknown';
+    }
+
+    String selectedDevice(String type, String property) {
+      final matches = audio?.devices.where(
+        (device) => device['Type'] == type && device[property] == true,
+      );
+      if (matches == null || matches.isEmpty) return 'Not available';
+      return matches.map((device) => device['Name']).join('; ');
+    }
+
+    final monitorSummary = display?.monitors
+        .map((monitor) {
+          final refresh = monitor.refreshRate == null
+              ? ''
+              : ', ${monitor.refreshRate!.toStringAsFixed(2)} Hz';
+          final primary = monitor.primary ? ', primary' : '';
+          return '#${monitor.number} ${monitor.label}: ${monitor.width}x${monitor.height} at (${monitor.x}, ${monitor.y}), rotation ${monitor.rotation}$refresh$primary';
+        })
+        .join('; ');
+
+    return MonitoringExportEntry(
+      pc: result.pc,
+      status: _monitoringOverallLabel(result),
+      lastScanned: result.scannedAt.isEmpty
+          ? 'Not available'
+          : result.scannedAt,
+      deploymentRecorded: intent?.recordedAt.isNotEmpty == true
+          ? intent!.recordedAt
+          : 'Not available',
+      connectivity: {
+        'Online': _yesNo(result.online),
+        'WinRM available': _yesNo(result.winRm),
+        'Monitoring error': result.error,
+      },
+      deployment: {
+        'CTS deployment': check(result.ctsDeployed, true),
+        'Audio configuration check': check(
+          result.audioConfigured,
+          intent?.audioRecall,
+        ),
+        'Display configuration check': check(
+          result.displayConfigured,
+          intent?.displayRecall,
+        ),
+        'Log Out shortcut': check(
+          result.logoutShortcut,
+          intent?.desktopShortcuts,
+        ),
+        'Reboot shortcut': check(
+          result.rebootShortcut,
+          intent?.desktopShortcuts,
+        ),
+        'BGInfo deployment': check(
+          result.bgInfoDeployed,
+          intent?.bgInfoInstall,
+        ),
+        'BGInfo executable': _yesNo(result.bgInfoExecutable),
+        'BGInfo profile': _yesNo(result.bgInfoProfile),
+        'BGInfo background': _yesNo(result.bgInfoBackground),
+        'BGInfo startup': _yesNo(result.bgInfoStartup),
+        'BGInfo startup method': result.bgInfoStartupMethod,
+        'Deployment requested audio recall': intent == null
+            ? 'Unknown'
+            : _yesNo(intent.audioRecall),
+        'Deployment requested display recall': intent == null
+            ? 'Unknown'
+            : _yesNo(intent.displayRecall),
+        'Deployment requested BGInfo': intent == null
+            ? 'Unknown'
+            : _yesNo(intent.bgInfoInstall),
+        'Deployment requested shortcuts': intent == null
+            ? 'Unknown'
+            : _yesNo(intent.desktopShortcuts),
+        'Uninstall recorded': result.uninstallRecordedAt,
+      },
+      audio: {
+        'Audio snapshot error': result.audioConfigurationError,
+        'Playback volume': audioValue('PlaybackVolume'),
+        'Playback mute': muteValue('PlaybackMute'),
+        'Playback communications volume': audioValue(
+          'PlaybackCommunicationVolume',
+        ),
+        'Playback communications mute': muteValue('PlaybackCommunicationMute'),
+        'Recording volume': audioValue('RecordingVolume'),
+        'Recording mute': muteValue('RecordingMute'),
+        'Recording communications volume': audioValue(
+          'RecordingCommunicationVolume',
+        ),
+        'Recording communications mute': muteValue(
+          'RecordingCommunicationMute',
+        ),
+        'Default playback device': selectedDevice('Playback', 'Default'),
+        'Playback communications device': selectedDevice(
+          'Playback',
+          'DefaultCommunication',
+        ),
+        'Default recording device': selectedDevice('Recording', 'Default'),
+        'Recording communications device': selectedDevice(
+          'Recording',
+          'DefaultCommunication',
+        ),
+        'Audio devices':
+            audio?.devices
+                .map((device) => '${device['Name']} (${device['Type']})')
+                .join('; ') ??
+            'Not available',
+      },
+      display: {
+        'Display snapshot error': result.displayConfigurationError,
+        'Display mode': display?.mode ?? 'Not available',
+        'Active displays': display == null
+            ? 'Not available'
+            : '${display.monitors.length}',
+        'Display details': monitorSummary ?? 'Not available',
+      },
+      software: {
+        'AudioDeviceCmdlets versions': result.audioDeviceCmdletsVersions.join(
+          '; ',
+        ),
+        'DisplayConfig versions': result.displayConfigVersions.join('; '),
+      },
+    );
+  }
+
+  String _monitoringOverallLabel(MonitoringPcResult result) {
+    if (!result.online) return 'Offline';
+    if (!result.winRm) return 'WinRM unavailable';
+    if (result.isUninstalled) return 'Uninstalled';
+    if (!result.ctsDeployed) return 'Missing deployment';
+    return _matchesMonitoringFilter(result, MonitoringFilter.failedChecks)
+        ? 'Attention needed'
+        : 'Healthy';
+  }
+
   Widget _buildMonitoringResultTile(MonitoringPcResult result) {
     final Color overallColor;
     final IconData overallIcon;
@@ -2737,21 +3090,21 @@ class _DeploymentPageState extends State<DeploymentPage> {
     if (!result.online) {
       overallColor = _pcProgressColor(PcProgress.offline);
       overallIcon = Icons.cloud_off;
-      overallLabel = 'Offline';
+      overallLabel = _monitoringOverallLabel(result);
     } else if (!result.winRm) {
       overallColor = _pcProgressColor(PcProgress.error);
       overallIcon = Icons.error;
-      overallLabel = 'WinRM unavailable';
+      overallLabel = _monitoringOverallLabel(result);
     } else if (result.isUninstalled) {
       overallColor = _monitoringStatusColor(
         MonitoringComponentStatus.notDeployed,
       );
       overallIcon = Icons.delete_outline;
-      overallLabel = 'Uninstalled';
+      overallLabel = _monitoringOverallLabel(result);
     } else if (!result.ctsDeployed) {
       overallColor = _pcProgressColor(PcProgress.warning);
       overallIcon = Icons.warning_amber_rounded;
-      overallLabel = 'Missing deployment';
+      overallLabel = _monitoringOverallLabel(result);
     } else {
       final fullyConfigured = !_matchesMonitoringFilter(
         result,
@@ -2907,8 +3260,22 @@ class _DeploymentPageState extends State<DeploymentPage> {
                   runSpacing: 10,
                   children: [
                     _buildMonitorCheck('CTS deployment', ctsStatus),
-                    _buildMonitorCheck('Audio configuration', audioStatus),
-                    _buildMonitorCheck('Display configuration', displayStatus),
+                    _buildMonitorCheck(
+                      'Audio configuration',
+                      audioStatus,
+                      onTap: audioStatus == MonitoringComponentStatus.present
+                          ? () => _showAudioConfiguration(result.pc)
+                          : null,
+                      buttonKey: const Key('audioConfigurationDetailsButton'),
+                    ),
+                    _buildMonitorCheck(
+                      'Display configuration',
+                      displayStatus,
+                      onTap: displayStatus == MonitoringComponentStatus.present
+                          ? () => _showDisplayConfiguration(result)
+                          : null,
+                      buttonKey: const Key('displayConfigurationDetailsButton'),
+                    ),
                     _buildMonitorCheck('Log Out.lnk', logoutStatus),
                     _buildMonitorCheck('Reboot.lnk', rebootStatus),
                     _buildMonitorCheck(
@@ -2928,6 +3295,22 @@ class _DeploymentPageState extends State<DeploymentPage> {
                     ),
                   ],
                 ),
+                if (shouldShowMissingAvConfigurationHelp(
+                  audioStatus,
+                  displayStatus,
+                )) ...[
+                  const SizedBox(height: 16),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: OutlinedButton.icon(
+                      key: const Key('missingAvConfigurationHelpButton'),
+                      onPressed: () =>
+                          _showMissingAvConfigurationHelp(dialogContext),
+                      icon: const Icon(Icons.help_outline_rounded),
+                      label: const Text('How to fix this'),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -2944,13 +3327,104 @@ class _DeploymentPageState extends State<DeploymentPage> {
 
   String _yesNo(bool value) => value ? 'yes' : 'no';
 
+  Future<void> _showMissingAvConfigurationHelp(BuildContext dialogContext) {
+    return showDialog<void>(
+      context: dialogContext,
+      builder: (context) => AlertDialog(
+        title: const Text('How to fix this'),
+        content: const SizedBox(
+          width: 420,
+          child: SelectableText(missingAvConfigurationHelp),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showAudioConfiguration(String pc) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => AudioConfigurationDialog(
+        pc: pc,
+        gateway: const FileAudioConfigurationGateway(),
+      ),
+    );
+  }
+
+  Future<void> _showDisplayConfiguration(MonitoringPcResult result) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => DisplayConfigurationPage(
+        pc: result.pc,
+        configuration: result.displayConfiguration,
+        error: result.displayConfigurationError,
+        asDialog: true,
+        loader:
+            result.displayConfiguration == null &&
+                result.displayConfigurationError.isEmpty
+            ? () => _reloadDisplayConfiguration(result.pc)
+            : null,
+      ),
+    );
+  }
+
+  Future<DisplayConfigurationLoadResult> _reloadDisplayConfiguration(
+    String pc,
+  ) async {
+    final root = _projectRootController.text.trim();
+    final script = File(_join(root, 'utility_scripts\\MonitorTarget.ps1'));
+    if (!script.existsSync()) {
+      return const DisplayConfigurationLoadResult(
+        configuration: null,
+        error: 'utility_scripts\\MonitorTarget.ps1 was not found.',
+      );
+    }
+
+    final report = MonitoringReport.fromJson(
+      await NativeOrchestrator(projectRoot: root, maxWorkers: 1).monitor([pc]),
+    );
+    final refreshed = report.pcs.firstWhere(
+      (candidate) => candidate.pc.toLowerCase() == pc.toLowerCase(),
+      orElse: () => report.pcs.first,
+    );
+    if (mounted) {
+      setState(() {
+        _monitorResults = _monitorResults
+            .map(
+              (candidate) => candidate.pc.toLowerCase() == pc.toLowerCase()
+                  ? refreshed
+                  : candidate,
+            )
+            .toList();
+      });
+    }
+    final fallbackError = refreshed.error.isNotEmpty
+        ? refreshed.error
+        : 'The target reported a saved profile, but monitoring returned no display details. Run Monitor again with the current utility scripts.';
+    return DisplayConfigurationLoadResult(
+      configuration: refreshed.displayConfiguration,
+      error: refreshed.displayConfigurationError.isNotEmpty
+          ? refreshed.displayConfigurationError
+          : refreshed.displayConfiguration == null
+          ? fallbackError
+          : '',
+    );
+  }
+
   Widget _buildMonitorCheck(
     String label,
     MonitoringComponentStatus status, {
     String? detail,
+    VoidCallback? onTap,
+    Key? buttonKey,
   }) {
     final color = _monitoringStatusColor(status);
-    return Container(
+    final contents = Container(
       width: 285,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
@@ -2976,7 +3450,19 @@ class _DeploymentPageState extends State<DeploymentPage> {
               ],
             ),
           ),
+          if (onTap != null) const Icon(Icons.chevron_right_rounded),
         ],
+      ),
+    );
+    if (onTap == null) return contents;
+    return Semantics(
+      button: true,
+      label: '$label. ${_monitoringStatusLabel(status)}. Open details.',
+      child: InkWell(
+        key: buttonKey,
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: contents,
       ),
     );
   }

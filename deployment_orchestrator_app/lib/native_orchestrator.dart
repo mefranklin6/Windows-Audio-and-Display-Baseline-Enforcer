@@ -675,6 +675,7 @@ class NativeOrchestrator {
         }
       }
     }
+    result['scanned_at'] = _clock().toIso8601String();
     onMonitoringProgress?.call(pc);
     return result;
   }
@@ -701,6 +702,10 @@ class NativeOrchestrator {
       'bginfo_startup_method': '',
       'audio_device_cmdlets_versions': <String>[],
       'display_config_versions': <String>[],
+      'audio_configuration': null,
+      'audio_configuration_error': '',
+      'display_configuration': null,
+      'display_configuration_error': '',
       'deployment_intent': await _loadDeploymentIntent(pc),
       'uninstall_recorded_at': await _loadUninstallRecord(pc),
     };

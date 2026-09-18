@@ -195,6 +195,7 @@ void main() {
         maxWorkers: 1,
         executor: executor,
         onMonitoringProgress: progress.add,
+        clock: () => DateTime.utc(2026, 9, 18, 16, 29),
       );
       final report = await monitor.monitor(['PC-002']);
 
@@ -202,6 +203,7 @@ void main() {
           (report['pcs'] as List<dynamic>).single as Map<String, dynamic>;
       expect(pc['online'], isTrue);
       expect(pc['audio_device_cmdlets_versions'], ['3.3']);
+      expect(pc['scanned_at'], '2026-09-18T16:29:00.000Z');
       expect(
         (pc['deployment_intent'] as Map<String, dynamic>)['desktop_shortcuts'],
         isTrue,

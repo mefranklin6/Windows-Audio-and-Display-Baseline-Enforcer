@@ -39,6 +39,34 @@ DeploymentOrchestratorApp testApp({
 }
 
 void main() {
+  test('shows AV repair guidance only for missing configuration', () {
+    expect(
+      shouldShowMissingAvConfigurationHelp(
+        MonitoringComponentStatus.missing,
+        MonitoringComponentStatus.present,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldShowMissingAvConfigurationHelp(
+        MonitoringComponentStatus.present,
+        MonitoringComponentStatus.missing,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldShowMissingAvConfigurationHelp(
+        MonitoringComponentStatus.notDeployed,
+        MonitoringComponentStatus.unknown,
+      ),
+      isFalse,
+    );
+    expect(
+      missingAvConfigurationHelp,
+      r"Ensure that display and audio settings are proper, then run 'SAVE_AV_SETTINGS.bat' either on the public desktop or in C:\ProgramData\CTS",
+    );
+  });
+
   testWidgets('shows deployment configuration controls', (tester) async {
     tester.view.physicalSize = const Size(1200, 1000);
     tester.view.devicePixelRatio = 1;
@@ -142,8 +170,7 @@ void main() {
       testApp(
         directoryPicker: (initialDirectory) async {
           pickerCalls++;
-          selectedPath =
-              '$initialDirectory${Platform.pathSeparator}Classroom';
+          selectedPath = '$initialDirectory${Platform.pathSeparator}Classroom';
           return selectedPath;
         },
         bgInfoAssetValidator: (_) async => const BgInfoFolderValidation.valid(),
@@ -669,6 +696,7 @@ void main() {
           'pc': 'PC-001',
           'online': true,
           'winrm': true,
+          'scanned_at': '2026-09-18T16:29:00.000Z',
           'cts_deployed': true,
           'audio_configured': false,
           'display_configured': true,
@@ -682,6 +710,39 @@ void main() {
           'bginfo_startup_method': 'av_config_recall.bat',
           'audio_device_cmdlets_versions': ['3.2', '3.3'],
           'display_config_versions': ['6.0.1'],
+          'audio_configuration': {
+            'levels': {
+              'PlaybackVolume': '55%',
+              'PlaybackCommunicationVolume': '55%',
+              'RecordingVolume': '81%',
+              'RecordingCommunicationVolume': '81%',
+            },
+            'devices': [
+              {
+                'Name': 'Headphones',
+                'Type': 'Playback',
+                'Default': true,
+                'DefaultCommunication': true,
+              },
+            ],
+          },
+          'display_configuration': {
+            'mode': 'Extended desktop',
+            'profile_path': r'C:\ProgramData\CTS\display_config_profile.xml',
+            'monitors': [
+              {
+                'number': 1,
+                'name': 'DELL P2314T',
+                'width': 1920,
+                'height': 1080,
+                'x': 0,
+                'y': 0,
+                'rotation': 0,
+                'refresh_rate': 60,
+                'primary': true,
+              },
+            ],
+          },
           'deployment_intent': {
             'recorded_at': '2026-09-14T10:00:00-07:00',
             'audio_recall': false,
@@ -696,6 +757,30 @@ void main() {
     expect(report.pcs.single.bgInfoStartupMethod, 'av_config_recall.bat');
     expect(report.pcs.single.audioConfigured, isFalse);
     expect(report.pcs.single.audioDeviceCmdletsVersions, ['3.2', '3.3']);
+    expect(report.pcs.single.scannedAt, '2026-09-18T16:29:00.000Z');
+    expect(
+      report.pcs.single.audioConfiguration?.devices.single['Name'],
+      'Headphones',
+    );
+    expect(monitoringDeviceNames(report.pcs.single), [
+      'Headphones (Playback)',
+      'DELL P2314T (Display)',
+    ]);
+    expect(
+      matchesMonitoringDeviceSearch(report.pcs.single, 'playback'),
+      isTrue,
+    );
+    expect(matchesMonitoringDeviceSearch(report.pcs.single, 'p2314'), isTrue);
+    expect(
+      matchesMonitoringDeviceSearch(report.pcs.single, 'projector'),
+      isFalse,
+    );
+    expect(isHealthyMonitoringResult(report.pcs.single), isTrue);
+    expect(report.pcs.single.displayConfiguration?.mode, 'Extended desktop');
+    expect(
+      report.pcs.single.displayConfiguration?.monitors.single.resolution,
+      '1920 × 1080',
+    );
     expect(report.pcs.single.deploymentIntent?.audioRecall, isFalse);
     expect(report.pcs.single.deploymentIntent?.displayRecall, isTrue);
     expect(report.pcs.single.isUninstalled, isFalse);
