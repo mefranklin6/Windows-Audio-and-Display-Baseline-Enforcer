@@ -189,6 +189,7 @@ if %errorlevel% neq 0 (
 - It is best practice to hide the power options in the start menu and direct users to the `Reboot` and `Log Out` desktop shortcuts so AV settings are recalled at logout.
 - If using the precompiled .exe, Windows may show a Smart Screen warning. If you don't trust the executable, you can bypass this warning and [compile the program yourself from source](#compile-the-app-yourself-optional).
 - Can't use an app / don't have admin rights on your deployment workstation? You can use the old Python deployment method in [v2.1.0](https://github.com/mefranklin6/Windows-Audio-and-Display-Baseline-Enforcer/releases/tag/v2.1.0) Download the source and follow the readme instructions.
+- Deploying to localhost: If you want to deploy the system to the same PC running the app, you'll need to run the app 'As Admin' and select `localhost` as the target.
 
 ## AI Disclosure
 
