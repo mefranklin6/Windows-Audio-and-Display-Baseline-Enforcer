@@ -44,7 +44,7 @@ If you plan on deploying remotely, make sure your workstation has the proper per
 1. Open the [latest GitHub Release](https://github.com/mefranklin6/Windows-Audio-and-Display-Baseline-Enforcer/releases/latest).
 2. Download and run `Windows-Audio-and-Display-Baseline-Enforcer-Orchestrator-<version>-Setup.exe`
 
-***...and that's it! If this method works for you, feel free to stop reading here and start using the app.***
+***...and that's it! If this method works for you, feel free to stop reading here and start using the app. Make sure to check out [post deployment steps](#post-deployment-steps) to save your known-good settings after deployment.***
 
 Note: This method will likely trigger a Windows Smart Screen warning, but you can safely proceed to run the program. If you don't trust the .exe or if you want to bypass Smart Screen altogether, you can follow the instructions below to compile your own exe from source.
 
@@ -167,11 +167,28 @@ Adds `Log Out` and `Reboot` shortcuts to the public desktop, which recall proper
 
 Removes all shortcuts, cmdlets, files, and settings from the target PC.
 
+## Post-Deployment Steps
+
+Regardless of what method you used to deploy this system, any deployment that features setting recall with drop a `SAVE_x_SETTINGS.bat` (named differently depending on which features were deployed) on the target PC's Public Desktops. Once deployment is complete, a technician needs to verify target PC settings are correct, then run this file to save the known-good settings.
+
+This file will self-destruct from the public desktop upon a successful save, but you can find a non-self destructing copy in `C:\ProgramData\CTS\`. You can re-run the script to save any new settings. Note that ProgramData is by default a hidden folder, so it is best to copy and paste the file path in File Explorer.
+
+To prevent unauthorized users from saving incorrect settings, this file requires local admin rights. If you don't have local admin rights on the target computer, you can edit the file and remove these lines to disable the requirement:
+
+```cmd
+net session >nul 2>&1
+if %errorlevel% neq 0 (
+  Powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+  exit /b
+)
+```
+
 ## Notes
 
 - The startup script is fast and lightweight, but Windows may take several seconds after login to execute Startup-folder items. Users may also briefly see a blank command prompt window (which is immediately minimized) before the saved settings are applied.
 - It is best practice to hide the power options in the start menu and direct users to the `Reboot` and `Log Out` desktop shortcuts so AV settings are recalled at logout.
 - If using the precompiled .exe, Windows may show a Smart Screen warning. If you don't trust the executable, you can bypass this warning and [compile the program yourself from source](#compile-the-app-yourself-optional).
+- Can't use an app / don't have admin rights on your deployment workstation? You can use the old Python deployment method in [v2.1.0](https://github.com/mefranklin6/Windows-Audio-and-Display-Baseline-Enforcer/releases/tag/v2.1.0) Download the source and follow the readme instructions.
 
 ## AI Disclosure
 
