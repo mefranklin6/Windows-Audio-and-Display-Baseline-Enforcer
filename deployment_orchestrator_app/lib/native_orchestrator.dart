@@ -321,17 +321,21 @@ class NativeOrchestrator {
       return result;
     }
 
-    final winRm = await _safeRun(
-      'powershell.exe',
-      ['Invoke-Command', '-ComputerName', pc, '-ScriptBlock', '{1}'],
-      pc: pc,
-      action: 'WinRM test',
-    );
-    if (winRm == null || winRm.exitCode != 0) {
-      _log('ERROR', '$pc: WinRM test failed');
-      _recordIssue(result, 'error', 'WinRM test failed', 'Connectivity');
-      _log('INFO', '$pc: Deployment complete with connectivity issues');
-      return result;
+    if (pc.toLowerCase() == 'localhost') {
+      _log('INFO', '$pc: Skipping WinRM test for local deployment');
+    } else {
+      final winRm = await _safeRun(
+        'powershell.exe',
+        ['Invoke-Command', '-ComputerName', pc, '-ScriptBlock', '{1}'],
+        pc: pc,
+        action: 'WinRM test',
+      );
+      if (winRm == null || winRm.exitCode != 0) {
+        _log('ERROR', '$pc: WinRM test failed');
+        _recordIssue(result, 'error', 'WinRM test failed', 'Connectivity');
+        _log('INFO', '$pc: Deployment complete with connectivity issues');
+        return result;
+      }
     }
 
     final scripts = <(String, bool)>[

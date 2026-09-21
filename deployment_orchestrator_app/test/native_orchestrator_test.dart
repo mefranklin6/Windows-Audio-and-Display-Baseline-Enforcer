@@ -148,6 +148,44 @@ void main() {
     expect(executor.calls, hasLength(1));
   });
 
+  test('deploys to localhost without requiring WinRM', () async {
+    final executor = FakeCommandExecutor((_, arguments) async {
+      if (arguments.first == 'Invoke-Command') {
+        return const CommandResult(exitCode: 1);
+      }
+      return const CommandResult(exitCode: 0);
+    });
+    final orchestrator = NativeOrchestrator(
+      projectRoot: projectRoot.path,
+      maxWorkers: 1,
+      executor: executor,
+    );
+
+    final report = await orchestrator.deploy(
+      ['LOCALHOST'],
+      const DeploymentOptions(
+        audioRecall: false,
+        displayRecall: false,
+        bgInfoInstall: false,
+        desktopShortcuts: false,
+        bgInfoFolder: '',
+      ),
+    );
+
+    final pc = (report['pcs'] as List<dynamic>).single as Map<String, dynamic>;
+    expect(pc['highest_severity'], 'info');
+    expect(
+      executor.calls.where((call) => call.contains('Invoke-Command')),
+      isEmpty,
+    );
+    expect(
+      executor.calls.any(
+        (call) => call.any((value) => value.endsWith(r'Cleanup.ps1')),
+      ),
+      isTrue,
+    );
+  });
+
   test(
     'monitor parses PowerShell JSON and includes deployment intent',
     () async {
