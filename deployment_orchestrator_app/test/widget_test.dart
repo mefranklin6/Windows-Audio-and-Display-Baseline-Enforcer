@@ -5,6 +5,7 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:deployment_orchestrator_app/app_settings.dart';
+import 'package:deployment_orchestrator_app/configuration_backup.dart';
 import 'package:deployment_orchestrator_app/main.dart';
 
 class MemorySettingsStore implements SettingsStore {
@@ -87,6 +88,8 @@ void main() {
     expect(find.byKey(const Key('deployButton')), findsOneWidget);
     expect(find.byKey(const Key('startMonitoringButton')), findsOneWidget);
     expect(find.byKey(const Key('uninstallButton')), findsOneWidget);
+    expect(find.byKey(const Key('backupButton')), findsOneWidget);
+    expect(find.byKey(const Key('restoreConfigButton')), findsOneWidget);
     expect(find.byIcon(Icons.monitor_heart_rounded), findsOneWidget);
     expect(find.byIcon(Icons.rocket_launch_rounded), findsOneWidget);
     expect(find.byType(TabBar), findsNothing);
@@ -101,6 +104,33 @@ void main() {
     expect(find.byKey(const Key('pythonField')), findsNothing);
     expect(find.byKey(const Key('bgInfoFolderField')), findsOneWidget);
     expect(find.byKey(const Key('bgInfoFolderPickerButton')), findsOneWidget);
+    expect(find.byKey(const Key('backupFolderField')), findsOneWidget);
+    expect(find.byKey(const Key('backupFolderPickerButton')), findsOneWidget);
+    expect(
+      find.byKey(const Key('deploymentHistoryFolderField')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('deploymentHistoryFolderPickerButton')),
+      findsOneWidget,
+    );
+    final backupFolder = tester
+        .widget<TextField>(find.byKey(const Key('backupFolderField')))
+        .controller
+        ?.text;
+    expect(
+      backupFolder,
+      endsWith(
+        '${Platform.pathSeparator}logs${Platform.pathSeparator}configuration_backups',
+      ),
+    );
+    final historyFolder = tester
+        .widget<TextField>(
+          find.byKey(const Key('deploymentHistoryFolderField')),
+        )
+        .controller
+        ?.text;
+    expect(historyFolder, endsWith('${Platform.pathSeparator}logs'));
     expect(find.byKey(const Key('bgInfoHelpButton')), findsOneWidget);
     expect(find.byKey(const Key('defaultTargetsFileField')), findsOneWidget);
     expect(
@@ -108,7 +138,33 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const Key('targetFileHelpButton')), findsOneWidget);
+    expect(find.byKey(const Key('applicationFilesHelpButton')), findsOneWidget);
+    expect(
+      find.byKey(const Key('deploymentHistoryFolderHelpButton')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('backupFolderHelpButton')), findsOneWidget);
     expect(find.byKey(const Key('workersField')), findsOneWidget);
+
+    for (final key in [
+      const Key('projectRootField'),
+      const Key('deploymentHistoryFolderField'),
+      const Key('backupFolderField'),
+    ]) {
+      expect(
+        tester.widget<TextField>(find.byKey(key)).decoration?.helperText,
+        isNull,
+      );
+    }
+
+    final targetFilePicker = tester.widget<IconButton>(
+      find.byKey(const Key('settingsTargetsFilePickerButton')),
+    );
+    expect((targetFilePicker.icon as Icon).icon, Icons.folder_open);
+
+    await tester.tap(find.byKey(const Key('backupFolderHelpButton')));
+    await tester.pumpAndSettle();
+    expect(find.text(configurationBackupFolderHelp), findsOneWidget);
   });
 
   testWidgets('uses built-in feature defaults and an empty BGInfo folder', (
@@ -401,6 +457,8 @@ void main() {
       'bginfo_install': false,
       'desktop_shortcuts': true,
       'bginfo_folder': 'SavedAssets',
+      'backup_folder': r'D:\CTS Backups',
+      'deployment_history_folder': r'\\fileserver\CTS\history',
       'max_workers': 4,
     });
 
@@ -438,6 +496,22 @@ void main() {
           ?.text,
       'SavedAssets',
     );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('backupFolderField')))
+          .controller
+          ?.text,
+      r'D:\CTS Backups',
+    );
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const Key('deploymentHistoryFolderField')),
+          )
+          .controller
+          ?.text,
+      r'\\fileserver\CTS\history',
+    );
   });
 
   test('writes settings to disk as JSON', () async {
@@ -470,6 +544,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('Operations'), findsOneWidget);
+    expect(find.text('Last action: Ready', findRichText: true), findsOneWidget);
     expect(find.text('Monitoring results'), findsOneWidget);
     expect(
       find.text(
@@ -527,6 +602,35 @@ void main() {
     expect(find.text('Uninstall from selected PCs?'), findsOneWidget);
     expect(find.byKey(const Key('confirmUninstallButton')), findsOneWidget);
     expect(find.text('Cancel'), findsOneWidget);
+  });
+
+  testWidgets('keeps non-success messages in a dismissible dialog', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      testApp(
+        settingsStore: MemorySettingsStore({
+          'target_source': TargetSource.direct.name,
+          'direct_targets': '',
+        }),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('deployButton')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Action needed'), findsOneWidget);
+    expect(find.text('Enter at least one target PC.'), findsOneWidget);
+    expect(
+      find.byKey(const Key('persistentMessageCloseButton')),
+      findsOneWidget,
+    );
+    expect(find.byType(SnackBar), findsNothing);
   });
 
   testWidgets('remains usable at 200 percent text scaling', (tester) async {
@@ -724,6 +828,12 @@ void main() {
                 'Default': true,
                 'DefaultCommunication': true,
               },
+              {
+                'Name': 'AVerMedia ExtremeCap UAC',
+                'Type': 'Recording',
+                'Default': true,
+                'DefaultCommunication': true,
+              },
             ],
           },
           'display_configuration': {
@@ -759,11 +869,12 @@ void main() {
     expect(report.pcs.single.audioDeviceCmdletsVersions, ['3.2', '3.3']);
     expect(report.pcs.single.scannedAt, '2026-09-18T16:29:00.000Z');
     expect(
-      report.pcs.single.audioConfiguration?.devices.single['Name'],
+      report.pcs.single.audioConfiguration?.devices.first['Name'],
       'Headphones',
     );
     expect(monitoringDeviceNames(report.pcs.single), [
       'Headphones (Playback)',
+      'AVerMedia ExtremeCap UAC (Recording)',
       'DELL P2314T (Display)',
     ]);
     expect(
@@ -771,6 +882,17 @@ void main() {
       isTrue,
     );
     expect(matchesMonitoringDeviceSearch(report.pcs.single, 'p2314'), isTrue);
+    expect(
+      matchesMonitoringDeviceSearch(report.pcs.single, 'headphones avermedia'),
+      isTrue,
+    );
+    expect(
+      matchesMonitoringDeviceSearch(
+        report.pcs.single,
+        'headphones; extremeCap, display',
+      ),
+      isTrue,
+    );
     expect(
       matchesMonitoringDeviceSearch(report.pcs.single, 'projector'),
       isFalse,
@@ -784,7 +906,88 @@ void main() {
     expect(report.pcs.single.deploymentIntent?.audioRecall, isFalse);
     expect(report.pcs.single.deploymentIntent?.displayRecall, isTrue);
     expect(report.pcs.single.isUninstalled, isFalse);
+    expect(missingConfigurationFilesForRestore(report.pcs.single), isEmpty);
   });
+
+  test('keeps monitored audio devices individually searchable', () {
+    final result = MonitoringReport.fromJson({
+      'pcs': [
+        {
+          'pc': 'PC-CAM313',
+          'audio_configuration': {
+            'levels': {
+              'PlaybackVolume': '55%',
+              'PlaybackCommunicationVolume': '55%',
+              'RecordingVolume': '81%',
+              'RecordingCommunicationVolume': '81%',
+            },
+            'devices': [
+              {
+                'Name': 'ExtronScalerD (Intel(R) Display Audio)',
+                'Type': 'Playback',
+                'Default': true,
+                'DefaultCommunication': true,
+              },
+              {
+                'Name': 'Speakers (Realtek(R) Audio)',
+                'Type': 'Playback',
+                'Default': false,
+                'DefaultCommunication': false,
+              },
+              {
+                'Name': 'Microphone (Live Streamer CAM313 Microphone)',
+                'Type': 'Recording',
+                'Default': true,
+                'DefaultCommunication': false,
+              },
+              {
+                'Name': 'Microphone (USB Audio Device)',
+                'Type': 'Recording',
+                'Default': false,
+                'DefaultCommunication': true,
+              },
+            ],
+          },
+        },
+      ],
+    }).pcs.single;
+
+    expect(monitoringDeviceNames(result), [
+      'ExtronScalerD (Intel(R) Display Audio) (Playback)',
+      'Microphone (Live Streamer CAM313 Microphone) (Recording)',
+      'Microphone (USB Audio Device) (Recording)',
+    ]);
+    expect(matchesMonitoringDeviceSearch(result, 'CAM313'), isTrue);
+    expect(matchesMonitoringDeviceSearch(result, 'Realtek'), isFalse);
+    expect(matchesMonitoringDeviceSearch(result, 'projector'), isFalse);
+  });
+
+  test(
+    'uses deployment intent when identifying restorable missing configs',
+    () {
+      final result = MonitoringReport.fromJson({
+        'pcs': [
+          {
+            'pc': 'PC-RESTORE',
+            'online': true,
+            'winrm': true,
+            'cts_deployed': true,
+            'audio_configured': false,
+            'display_configured': false,
+            'deployment_intent': {
+              'audio_recall': true,
+              'display_recall': false,
+            },
+          },
+        ],
+      }).pcs.single;
+
+      expect(
+        missingConfigurationFilesForRestore(result),
+        unorderedEquals(audioConfigurationFileNames),
+      );
+    },
+  );
 
   test('recognizes an uninstall record when CTS is absent', () {
     final report = MonitoringReport.fromJson({
