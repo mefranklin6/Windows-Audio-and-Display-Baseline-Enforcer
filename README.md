@@ -10,6 +10,8 @@ A deterministic audio and display baseline enforcement system for shared Windows
 - Admins or owners of computers installed as part of complex AV systems, including home theaters.
 - Admins or owners of computers used as kiosks or digital signage.
 
+This system is in-production at California State University Chico, and multiple other institutions have at least expressed interest in adoption. The total amount of systems this project is deployed to is unknown, as adding telemetry or tracking is not something that will ever be added to this project.
+
 ### Goals
 
 This system is designed to keep audio and display configuration stable and predictable.
@@ -169,7 +171,15 @@ Removes all shortcuts, cmdlets, files, and settings from the target PC.
 
 ## Post-Deployment Steps
 
-Regardless of what method you used to deploy this system, any deployment that features setting recall with drop a `SAVE_x_SETTINGS.bat` (named differently depending on which features were deployed) on the target PC's Public Desktops. Once deployment is complete, a technician needs to verify target PC settings are correct, then run this file to save the known-good settings.
+Regardless of what method you used to deploy this system, any deployment that features setting recall with drop a `SAVE_x_SETTINGS.bat` (named differently depending on which features were deployed) on the target PC's Public Desktops. Once deployment is complete, a technician needs to locally verify target PC settings are correct, then run this file to save the known-good settings.
+
+***Important: Running the save script should be done locally while logged into the PC.***
+
+Why?
+
+- Extra chance to confirm all settings are proper
+- Ensures the PC is in high-power mode and we can enumerate all devices
+- Ensures that the save script will work, as RDP or other headless sessions are not supported by underlying dependencies.
 
 This file will self-destruct from the public desktop upon a successful save, but you can find a non-self destructing copy in `C:\ProgramData\CTS\`. You can re-run the script to save any new settings. Note that ProgramData is by default a hidden folder, so it is best to copy and paste the file path in File Explorer.
 
@@ -191,13 +201,65 @@ if %errorlevel% neq 0 (
 - Can't use an app / don't have admin rights on your deployment workstation? You can use the old Python deployment method in [v2.1.0](https://github.com/mefranklin6/Windows-Audio-and-Display-Baseline-Enforcer/releases/tag/v2.1.0) Download the source and follow the readme instructions.
 - Deploying to localhost: If you want to deploy the system to the same PC running the app, you'll need to run the app 'As Admin' and select `localhost` as the target.
 
+### PowerShell execution policy
+
+The app runs its bundled, unsigned PowerShell scripts with a process-only
+`Bypass`. This applies only to the child PowerShell process and does not change
+the workstation's persistent execution policy. The app checks the effective
+policy before deployment, monitoring, or uninstall operations and stops with an
+actionable error if organizational Group Policy enforces `AllSigned` or
+`Restricted`. Those policies cannot be overridden by the app; an administrator
+must permit the scripts for the app to operate.
+
 ## AI Disclosure
 
 The Powershell scripts that are the core of the backend, and the old Python orchestrator files that became the basis for the app, were either developed before AI became useful, or AI was used as a tool with strict human review. These are the files that actually modify the PC's, and they have been thoroughly tested and reviewed. These systems have been in-production without issue.
 
 The new front-end GUI, or 'App' was almost entirely 'vibe coded', but tested, and the parts that touch anything important were reviewed manually. Front-end, aesthetic, and UX elements are developed quickly by prompting AI, and these less important aspects are not as strictly reviewed. AI has also developed integration tests for changes to the GUI.
 
+## Data and Privacy
+
+This is a privacy-first project. No telemetry data is collected from usage of this system. The app uses internet access only to check for and download an update when requested. Internet access is required on target computers only during install as they install cmdlets from Github trusted sources.
+
+## Security
+
+The open-source projects that are installed as part of Audio and Display recall are forks of their upstream projects, and are specifically maintained for this system to ensure compatibility and prevent supply chain attacks. These projects were audited, and Github Advanced Security features have been enabled. Updates to the upstream projects are added after both human and CI/CD testing and review are completed.
+
+The system is built around leveraging existing security controls that are already in your environment.
+For example, to deploy the project to remote computers, the app user essentially has to be local admin on the remote PC's and within a network that allows connecting to those remote PC's.
+
 ## Release Changelog
+
+### v3.3.0
+
+28 September 2026
+
+#### New Features
+
+- Ability to backup and restore configuration files
+- Ability to specify data paths, including support for multi-user environments where everyone is using the same data locations (like a SMB file share)
+- Ability to perform operations on a single PC from the PC detail window
+- In-App updating
+
+#### Improvements
+
+- Improved audio device recall when windows re-enumerates the device and prepends numbers to the device name.
+- Improved install and uninstall process
+- Increased compatibility with systems that have hardened PowerShell Execution Policies
+- Cleanup UI
+- Errors now result in popups instead of snack bars
+
+#### Bug Fixes
+
+- Fixed 'Search for device' bug where multiple devices were being grouped together
+- 'Search for device' now only searches active devices
+- Handle viewing and editing audio config files that were saved before v1.1.1 (before mute states were recorded)
+
+### v3.2.2
+
+21 September 2026
+
+- Fix the ability to deploy to localhost
 
 ### v3.2.1
 
