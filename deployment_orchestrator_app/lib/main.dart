@@ -894,6 +894,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
   bool _stopRequested = false;
   bool _monitorStopRequested = false;
   bool _checkingForUpdates = false;
+  bool _installingUpdate = false;
   NativeOrchestrator? _deploymentOrchestrator;
   NativeOrchestrator? _monitoringOrchestrator;
   NativeOrchestrator? _uninstallOrchestrator;
@@ -1122,7 +1123,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
       '$parent${Platform.pathSeparator}$child';
 
   Future<void> _checkForUpdates() async {
-    if (_checkingForUpdates) return;
+    if (_checkingForUpdates || _installingUpdate || _controlsLocked) return;
     setState(() => _checkingForUpdates = true);
     try {
       final update = await checkForUpdates();
@@ -1155,7 +1156,16 @@ class _DeploymentPageState extends State<DeploymentPage> {
               onPressed: () => Navigator.of(dialogContext).pop(),
               child: const Text('Close'),
             ),
-            if (update.updateAvailable)
+            if (update.updateAvailable && update.canInstall)
+              FilledButton.icon(
+                onPressed: () async {
+                  Navigator.of(dialogContext).pop();
+                  await _downloadAndInstallUpdate(update);
+                },
+                icon: const Icon(Icons.download_outlined),
+                label: const Text('Install update'),
+              ),
+            if (update.updateAvailable && !update.canInstall)
               FilledButton.icon(
                 onPressed: () async {
                   Navigator.of(dialogContext).pop();
@@ -1167,12 +1177,8 @@ class _DeploymentPageState extends State<DeploymentPage> {
                     }
                   }
                 },
-                icon: const Icon(Icons.download_outlined),
-                label: Text(
-                  update.downloadUrl == null
-                      ? 'Open releases'
-                      : 'Download installer',
-                ),
+                icon: const Icon(Icons.open_in_new),
+                label: const Text('Open release'),
               ),
           ],
         ),
@@ -1183,6 +1189,67 @@ class _DeploymentPageState extends State<DeploymentPage> {
       }
     } finally {
       if (mounted) setState(() => _checkingForUpdates = false);
+    }
+  }
+
+  Future<void> _downloadAndInstallUpdate(UpdateCheckResult update) async {
+    if (_installingUpdate) return;
+    setState(() => _installingUpdate = true);
+    final progress = ValueNotifier<double?>(null);
+    Future<void>? progressDialog;
+    var progressDialogOpen = false;
+    if (mounted) {
+      progressDialogOpen = true;
+      progressDialog = showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Downloading update'),
+          content: ValueListenableBuilder<double?>(
+            valueListenable: progress,
+            builder: (context, value, child) => Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Downloading and verifying version ${update.latestVersion}…',
+                ),
+                const SizedBox(height: 16),
+                LinearProgressIndicator(value: value),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    try {
+      final prepared = await downloadUpdate(
+        update,
+        onProgress: (received, total) {
+          progress.value = total == null || total == 0
+              ? null
+              : received / total;
+        },
+      );
+      if (mounted && progressDialogOpen) {
+        Navigator.of(context, rootNavigator: true).pop();
+        progressDialogOpen = false;
+      }
+      await progressDialog;
+      await launchUpdate(prepared);
+      exit(0);
+    } on Object catch (error) {
+      if (mounted) {
+        if (progressDialogOpen) {
+          Navigator.of(context, rootNavigator: true).pop();
+          progressDialogOpen = false;
+        }
+        await progressDialog;
+        _showErrorMessage('Could not install the update: $error');
+      }
+    } finally {
+      progress.dispose();
+      if (mounted) setState(() => _installingUpdate = false);
     }
   }
 
@@ -3096,9 +3163,12 @@ class _DeploymentPageState extends State<DeploymentPage> {
         actions: [
           IconButton(
             key: const Key('checkForUpdatesButton'),
-            onPressed: _checkingForUpdates ? null : _checkForUpdates,
+            onPressed:
+                _checkingForUpdates || _installingUpdate || _controlsLocked
+                ? null
+                : _checkForUpdates,
             tooltip: 'Check for updates (version $applicationVersion)',
-            icon: _checkingForUpdates
+            icon: _checkingForUpdates || _installingUpdate
                 ? const SizedBox.square(
                     dimension: 20,
                     child: CircularProgressIndicator(strokeWidth: 2),

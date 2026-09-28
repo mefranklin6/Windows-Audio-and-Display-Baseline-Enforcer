@@ -18,5 +18,65 @@ void main() {
     );
     expect(update.updateAvailable, isTrue);
     expect(update.preferredUrl, releasesPageUrl);
+    expect(update.canInstall, isFalse);
+  });
+
+  test('selects an installer and its matching checksum asset', () {
+    final update = parseRelease({
+      'tag_name': 'v1.2.0',
+      'html_url': 'https://example.test/release',
+      'assets': [
+        {
+          'name': 'Windows-Audio-and-Display-Baseline-Enforcer-Orchestrator-1.2.0-Setup.exe.sha256',
+          'browser_download_url': 'https://example.test/setup.sha256',
+        },
+        {
+          'name': 'Windows-Audio-and-Display-Baseline-Enforcer-Orchestrator-1.2.0-Setup.exe',
+          'browser_download_url': 'https://example.test/setup.exe',
+        },
+      ],
+    });
+
+    expect(update.downloadUrl, 'https://example.test/setup.exe');
+    expect(update.checksumUrl, 'https://example.test/setup.sha256');
+    expect(update.canInstall, isTrue);
+  });
+
+  test(
+    'rejects an installer asset name that could escape the update folder',
+    () {
+      expect(
+        () => parseRelease({
+          'tag_name': 'v1.2.0',
+          'assets': [
+            {
+              'name': r'..\app-1.2.0-Setup.exe',
+              'browser_download_url': 'https://example.test/setup.exe',
+            },
+          ],
+        }),
+        throwsFormatException,
+      );
+    },
+  );
+
+  test('parses only the checksum for the expected installer', () {
+    const expected =
+        '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+    expect(
+      parseSha256Checksum(
+        '$expected  app-1.2.0-Setup.exe\n'
+        'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff  another.exe\n',
+        expectedFileName: 'app-1.2.0-Setup.exe',
+      ),
+      expected,
+    );
+    expect(
+      () => parseSha256Checksum(
+        '$expected  another.exe',
+        expectedFileName: 'app-1.2.0-Setup.exe',
+      ),
+      throwsFormatException,
+    );
   });
 }

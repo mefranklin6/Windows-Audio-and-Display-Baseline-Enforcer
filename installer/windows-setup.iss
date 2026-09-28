@@ -29,7 +29,7 @@ DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
-UsePreviousAppDir=no
+UsePreviousAppDir=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#OutputDir}
@@ -51,6 +51,12 @@ Source: "{#LegacyInstallDir}\targets.txt"; DestDir: "{#AppDataDir}"; Flags: exte
 Source: "{#LegacyInstallDir}\BGInfo\*"; DestDir: "{#AppDataDir}\BGInfo"; Flags: external skipifsourcedoesntexist onlyifdoesntexist recursesubdirs createallsubdirs
 Source: "{#LegacyInstallDir}\logs\*"; DestDir: "{#AppDataDir}\logs"; Flags: external skipifsourcedoesntexist onlyifdoesntexist recursesubdirs createallsubdirs
 Source: "{#RepoRoot}\targets.txt.example"; DestDir: "{#AppDataDir}"; DestName: "targets.txt"; Flags: onlyifdoesntexist
+
+; These folders contain application-managed code, not user data. Replacing the
+; complete bundle prevents renamed or removed scripts from surviving an update.
+[InstallDelete]
+Type: filesandordirs; Name: "{#AppDataDir}\installer_scripts"
+Type: filesandordirs; Name: "{#AppDataDir}\utility_scripts"
 
 [Dirs]
 Name: "{#AppDataDir}\BGInfo"
