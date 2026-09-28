@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 typedef LogSink = void Function(String line);
 typedef ProgressSink = void Function(String target);
@@ -104,14 +105,17 @@ class NativeOrchestrator {
   NativeOrchestrator({
     required this.projectRoot,
     required this.maxWorkers,
+    String? historyRoot,
     CommandExecutor? executor,
     this.onLog,
     this.onMonitoringProgress,
     DateTime Function()? clock,
   }) : executor = executor ?? ProcessCommandExecutor(),
-       _clock = clock ?? DateTime.now;
+       _clock = clock ?? DateTime.now,
+       historyRoot = historyRoot ?? '$projectRoot${Platform.pathSeparator}logs';
 
   final String projectRoot;
+  final String historyRoot;
   final int maxWorkers;
   final CommandExecutor executor;
   final LogSink? onLog;
@@ -577,14 +581,11 @@ class NativeOrchestrator {
     List<String> targets,
     DeploymentOptions options,
   ) async {
-    final directory = Directory(
-      _join(_join(projectRoot, 'logs'), 'deployment_records'),
-    );
+    final directory = Directory(_join(historyRoot, 'deployment_records'));
     await directory.create(recursive: true);
     final recordedAt = _clock().toIso8601String();
     for (final pc in targets) {
       final file = File(_join(directory.path, _recordName(pc)));
-      final temporary = File('${file.path}.$pid.tmp');
       final payload = {
         'pc': pc,
         'recorded_at': recordedAt,
@@ -593,32 +594,49 @@ class NativeOrchestrator {
         'bginfo_install': options.bgInfoInstall,
         'desktop_shortcuts': options.desktopShortcuts,
       };
-      await temporary.writeAsString(
-        const JsonEncoder.withIndent('  ').convert(payload),
-      );
-      await temporary.rename(file.path);
+      await _writeJsonRecord(file, payload);
       final uninstallRecord = File(
-        _join(
-          _join(_join(projectRoot, 'logs'), 'uninstall_records'),
-          _recordName(pc),
-        ),
+        _join(_join(historyRoot, 'uninstall_records'), _recordName(pc)),
       );
       if (await uninstallRecord.exists()) await uninstallRecord.delete();
     }
   }
 
   Future<void> _writeUninstallRecord(String pc) async {
-    final directory = Directory(
-      _join(_join(projectRoot, 'logs'), 'uninstall_records'),
-    );
+    final directory = Directory(_join(historyRoot, 'uninstall_records'));
     await directory.create(recursive: true);
     final file = File(_join(directory.path, _recordName(pc)));
-    final temporary = File('${file.path}.$pid.tmp');
-    await temporary.writeAsString(
-      const JsonEncoder.withIndent(' ')
-          .convert({'pc': pc, 'recorded_at': _clock().toIso8601String()}),
+    await _writeJsonRecord(file, {
+      'pc': pc,
+      'recorded_at': _clock().toIso8601String(),
+    });
+  }
+
+  Future<void> _writeJsonRecord(
+    File destination,
+    Map<String, dynamic> payload,
+  ) async {
+    await destination.parent.create(recursive: true);
+    final safeHost = Platform.localHostname.replaceAll(
+      RegExp(r'[^A-Za-z0-9_.-]+'),
+      '_',
     );
-    await temporary.rename(file.path);
+    final temporary = File(
+      '${destination.path}.$safeHost.$pid.${DateTime.now().microsecondsSinceEpoch}.${Random.secure().nextInt(0x7fffffff)}.tmp',
+    );
+    try {
+      await temporary.writeAsString(
+        const JsonEncoder.withIndent('  ').convert(payload),
+        flush: true,
+      );
+      try {
+        await temporary.rename(destination.path);
+      } on FileSystemException {
+        await temporary.copy(destination.path);
+      }
+    } finally {
+      if (await temporary.exists()) await temporary.delete();
+    }
   }
 
   Future<Map<String, dynamic>> _inspectTarget(String pc) async {
@@ -661,6 +679,7 @@ class NativeOrchestrator {
             jsonDecode(outputLines.last) as Map,
           );
           result['deployment_intent'] = await _loadDeploymentIntent(pc);
+          result['backup_recorded_at'] = await _loadBackupRecord(pc);
           result['uninstall_recorded_at'] = await _loadUninstallRecord(pc);
           final status = result['online'] != true
               ? 'offline'
@@ -711,16 +730,14 @@ class NativeOrchestrator {
       'display_configuration': null,
       'display_configuration_error': '',
       'deployment_intent': await _loadDeploymentIntent(pc),
+      'backup_recorded_at': await _loadBackupRecord(pc),
       'uninstall_recorded_at': await _loadUninstallRecord(pc),
     };
   }
 
   Future<Map<String, dynamic>?> _loadDeploymentIntent(String pc) async {
     final file = File(
-      _join(
-        _join(_join(projectRoot, 'logs'), 'deployment_records'),
-        _recordName(pc),
-      ),
+      _join(_join(historyRoot, 'deployment_records'), _recordName(pc)),
     );
     try {
       final decoded = jsonDecode(await file.readAsString());
@@ -734,10 +751,23 @@ class NativeOrchestrator {
 
   Future<String?> _loadUninstallRecord(String pc) async {
     final file = File(
-      _join(
-        _join(_join(projectRoot, 'logs'), 'uninstall_records'),
-        _recordName(pc),
-      ),
+      _join(_join(historyRoot, 'uninstall_records'), _recordName(pc)),
+    );
+    try {
+      final decoded = jsonDecode(await file.readAsString());
+      return decoded is Map<String, dynamic>
+          ? decoded['recorded_at'] as String?
+          : null;
+    } on FileSystemException {
+      return null;
+    } on FormatException {
+      return null;
+    }
+  }
+
+  Future<String?> _loadBackupRecord(String pc) async {
+    final file = File(
+      _join(_join(historyRoot, 'backup_records'), _recordName(pc)),
     );
     try {
       final decoded = jsonDecode(await file.readAsString());
