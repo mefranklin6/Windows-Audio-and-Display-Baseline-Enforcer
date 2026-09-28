@@ -52,6 +52,9 @@ void main() {
     'deploys enabled scripts in order and records structured warnings',
     () async {
       final logs = <String>[];
+      final sharedHistory = Directory(
+        '${projectRoot.path}${Platform.pathSeparator}shared-history',
+      );
       final executor = FakeCommandExecutor((_, arguments) async {
         if (arguments.first == 'ping' || arguments.first == 'Invoke-Command') {
           return const CommandResult(exitCode: 0);
@@ -71,6 +74,7 @@ void main() {
       });
       final orchestrator = NativeOrchestrator(
         projectRoot: projectRoot.path,
+        historyRoot: sharedHistory.path,
         maxWorkers: 2,
         executor: executor,
         onLog: logs.add,
@@ -106,8 +110,7 @@ void main() {
       );
 
       final record = File(
-        '${projectRoot.path}${Platform.pathSeparator}logs'
-        '${Platform.pathSeparator}deployment_records'
+        '${sharedHistory.path}${Platform.pathSeparator}deployment_records'
         '${Platform.pathSeparator}pc-001.json',
       );
       final intent =
@@ -227,6 +230,16 @@ void main() {
           bgInfoFolder: '',
         ),
       );
+      final backupRecords = Directory(
+        '${projectRoot.path}${Platform.pathSeparator}logs'
+        '${Platform.pathSeparator}backup_records',
+      );
+      await backupRecords.create(recursive: true);
+      await File(
+        '${backupRecords.path}${Platform.pathSeparator}pc-002.json',
+      ).writeAsString(
+        jsonEncode({'pc': 'PC-002', 'recorded_at': '2026-09-18T15:00:00.000Z'}),
+      );
 
       final monitor = NativeOrchestrator(
         projectRoot: projectRoot.path,
@@ -246,6 +259,7 @@ void main() {
         (pc['deployment_intent'] as Map<String, dynamic>)['desktop_shortcuts'],
         isTrue,
       );
+      expect(pc['backup_recorded_at'], '2026-09-18T15:00:00.000Z');
       expect(progress, ['PC-002']);
     },
   );
