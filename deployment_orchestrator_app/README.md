@@ -70,6 +70,12 @@ git push origin v1.0.0
 
 The deployment workstation needs Windows PowerShell plus the administrative permissions, WinRM connectivity, and administrative-share access required by the root [README](../README.md). Target computers need internet access when the deployment scripts install pinned PowerShell modules from GitHub.
 
+The app requests `-ExecutionPolicy Bypass` only for each child PowerShell
+process; it does not persistently change the workstation policy. Before an
+operation starts, it checks that the effective policy permits unsigned scripts.
+If Group Policy enforces `AllSigned` or `Restricted`, the operation stops and
+must be permitted by an administrator.
+
 Target files must be UTF-8 text with one hostname per line. Blank lines and lines beginning with `#` are allowed. Settings are stored in `%APPDATA%\Windows Audio and Display Baseline Enforcer Orchestrator\settings.json`; timestamped deployment and monitoring logs are written to `logs` under the application-files directory.
 
 For BGInfo deployments, select any accessible folder containing exactly one `BGInfo64.exe`, one `.bgi` configuration file, and one supported background image (`.jpg`, `.jpeg`, `.png`, `.bmp`, or `.gif`).

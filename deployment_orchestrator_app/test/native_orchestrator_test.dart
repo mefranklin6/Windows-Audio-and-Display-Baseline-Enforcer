@@ -56,7 +56,8 @@ void main() {
         '${projectRoot.path}${Platform.pathSeparator}shared-history',
       );
       final executor = FakeCommandExecutor((_, arguments) async {
-        if (arguments.first == 'ping' || arguments.first == 'Invoke-Command') {
+        if (arguments.contains('ping') ||
+            arguments.contains('Invoke-Command')) {
           return const CommandResult(exitCode: 0);
         }
         if (arguments.any(
@@ -121,9 +122,12 @@ void main() {
   );
 
   test('reports a failed ping without running installer scripts', () async {
-    final executor = FakeCommandExecutor(
-      (_, _) async => const CommandResult(exitCode: 1),
-    );
+    final executor = FakeCommandExecutor((_, arguments) async {
+      if (arguments.contains('-Command')) {
+        return const CommandResult(exitCode: 0);
+      }
+      return const CommandResult(exitCode: 1);
+    });
     final orchestrator = NativeOrchestrator(
       projectRoot: projectRoot.path,
       maxWorkers: 1,
@@ -148,12 +152,12 @@ void main() {
       (pc['issues'] as List<dynamic>).single,
       containsPair('message', 'Ping test failed'),
     );
-    expect(executor.calls, hasLength(1));
+    expect(executor.calls, hasLength(2));
   });
 
   test('deploys to localhost without requiring WinRM', () async {
     final executor = FakeCommandExecutor((_, arguments) async {
-      if (arguments.first == 'Invoke-Command') {
+      if (arguments.contains('Invoke-Command')) {
         return const CommandResult(exitCode: 1);
       }
       return const CommandResult(exitCode: 0);
@@ -213,8 +217,8 @@ void main() {
         projectRoot: projectRoot.path,
         maxWorkers: 1,
         executor: FakeCommandExecutor((_, arguments) async {
-          if (arguments.first == 'ping' ||
-              arguments.first == 'Invoke-Command') {
+          if (arguments.contains('ping') ||
+              arguments.contains('Invoke-Command')) {
             return const CommandResult(exitCode: 0);
           }
           return const CommandResult(exitCode: 0);
@@ -303,7 +307,7 @@ void main() {
               as Map<String, dynamic>;
       expect(uninstallResult['success'], isTrue);
       expect(
-        uninstallExecutor.calls.single,
+        uninstallExecutor.calls.last,
         contains(endsWith(r'utility_scripts\uninstall.ps1')),
       );
 
@@ -367,5 +371,64 @@ void main() {
 
     expect(maximumActive, 2);
     expect(pcs, ['PC-1', 'PC-2', 'PC-3', 'PC-4', 'PC-5']);
+  });
+
+  test('uses a process-only bypass for every PowerShell invocation', () async {
+    final executor = FakeCommandExecutor((_, arguments) async {
+      if (arguments.contains('ping')) {
+        return const CommandResult(exitCode: 1);
+      }
+      return const CommandResult(exitCode: 0);
+    });
+    final orchestrator = NativeOrchestrator(
+      projectRoot: projectRoot.path,
+      maxWorkers: 1,
+      executor: executor,
+    );
+
+    await orchestrator.deploy(
+      ['OFFLINE-PC'],
+      const DeploymentOptions(
+        audioRecall: true,
+        displayRecall: true,
+        bgInfoInstall: false,
+        desktopShortcuts: true,
+        bgInfoFolder: '',
+      ),
+    );
+
+    expect(executor.calls, isNotEmpty);
+    for (final call in executor.calls) {
+      expect(call.first, 'powershell.exe');
+      expect(call, containsAllInOrder(['-ExecutionPolicy', 'Bypass']));
+    }
+  });
+
+  test('blocks execution when Group Policy requires signed scripts', () async {
+    final executor = FakeCommandExecutor(
+      (_, _) async => const CommandResult(
+        exitCode: 13,
+        stdout:
+            '{"effective":"AllSigned","machinePolicy":"AllSigned",'
+            '"userPolicy":"Undefined"}',
+      ),
+    );
+    final orchestrator = NativeOrchestrator(
+      projectRoot: projectRoot.path,
+      maxWorkers: 1,
+      executor: executor,
+    );
+
+    expect(
+      () => orchestrator.monitor(['PC-001']),
+      throwsA(
+        isA<PowerShellExecutionPolicyException>().having(
+          (error) => error.message,
+          'message',
+          allOf(contains('AllSigned'), contains('cannot be overridden')),
+        ),
+      ),
+    );
+    expect(executor.calls, hasLength(1));
   });
 }

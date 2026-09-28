@@ -18,6 +18,15 @@ class CommandResult {
   final String stderr;
 }
 
+class PowerShellExecutionPolicyException implements Exception {
+  const PowerShellExecutionPolicyException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 abstract interface class CommandExecutor {
   bool get isCancelled;
 
@@ -131,6 +140,7 @@ class NativeOrchestrator {
     DeploymentOptions options,
   ) async {
     _validate(targets, options: options);
+    await verifyPowerShellExecutionPolicy();
     final normalizedTargets = _deduplicateTargets(targets);
     final logFile = await _openLog('');
     try {
@@ -166,6 +176,7 @@ class NativeOrchestrator {
 
   Future<Map<String, dynamic>> monitor(List<String> targets) async {
     _validate(targets);
+    await verifyPowerShellExecutionPolicy();
     final normalizedTargets = _deduplicateTargets(targets);
     final logFile = await _openLog('monitor-');
     try {
@@ -192,6 +203,7 @@ class NativeOrchestrator {
 
   Future<Map<String, dynamic>> uninstall(List<String> targets) async {
     _validate(targets);
+    await verifyPowerShellExecutionPolicy();
     final normalizedTargets = _deduplicateTargets(targets);
     final logFile = await _openLog('uninstall-');
     try {
@@ -235,6 +247,78 @@ class NativeOrchestrator {
       );
     }
   }
+
+  Future<void> verifyPowerShellExecutionPolicy() async {
+    const command = r'''
+$effective = [string](Get-ExecutionPolicy)
+$policies = Get-ExecutionPolicy -List
+[pscustomobject]@{
+  effective = $effective
+  machinePolicy = [string]$policies.MachinePolicy
+  userPolicy = [string]$policies.UserPolicy
+} | ConvertTo-Json -Compress
+if ($effective -in @('Restricted', 'AllSigned')) { exit 13 }
+''';
+    CommandResult completed;
+    try {
+      completed = await executor.run(
+        'powershell.exe',
+        _powerShellArguments(['-Command', command]),
+        workingDirectory: projectRoot,
+      );
+    } on ProcessException catch (error) {
+      throw PowerShellExecutionPolicyException(
+        'Windows PowerShell could not be started: ${error.message}',
+      );
+    } on OSError catch (error) {
+      throw PowerShellExecutionPolicyException(
+        'Windows PowerShell could not be started: $error',
+      );
+    }
+    if (completed.exitCode == 0) return;
+
+    var policy = 'unknown';
+    final outputLines = completed.stdout
+        .split(RegExp(r'[\r\n]+'))
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty);
+    for (final line in outputLines.toList().reversed) {
+      try {
+        final decoded = jsonDecode(line);
+        if (decoded is Map && decoded['effective'] is String) {
+          policy = decoded['effective'] as String;
+          break;
+        }
+      } on FormatException {
+        // Ignore diagnostic output and retain the best policy value found.
+      }
+    }
+    final detail = completed.stderr.trim();
+    if (completed.exitCode != 13) {
+      throw PowerShellExecutionPolicyException(
+        'The app could not verify the PowerShell execution policy '
+        '(exit code ${completed.exitCode}).'
+        '${detail.isEmpty ? '' : '\n\nPowerShell: $detail'}',
+      );
+    }
+    throw PowerShellExecutionPolicyException(
+      'PowerShell execution policy “$policy” does not allow this app to run '
+      'its unsigned scripts. The app already requests a temporary, process-only '
+      'Bypass and does not weaken the workstation policy. Ask your administrator '
+      'to permit these scripts; an AllSigned or Restricted policy enforced by '
+      'Group Policy cannot be overridden by the app.'
+      '${detail.isEmpty ? '' : '\n\nPowerShell: $detail'}',
+    );
+  }
+
+  List<String> _powerShellArguments(List<String> arguments) => <String>[
+    '-NoLogo',
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    ...arguments,
+  ];
 
   List<String> _deduplicateTargets(List<String> targets) {
     return targets
@@ -314,7 +398,7 @@ class NativeOrchestrator {
     _log('INFO', '$pc: Queuing configuration check');
     final ping = await _safeRun(
       'powershell.exe',
-      ['ping', '-n', '1', pc],
+      _powerShellArguments(['ping', '-n', '1', pc]),
       pc: pc,
       action: 'Ping test',
     );
@@ -330,7 +414,13 @@ class NativeOrchestrator {
     } else {
       final winRm = await _safeRun(
         'powershell.exe',
-        ['Invoke-Command', '-ComputerName', pc, '-ScriptBlock', '{1}'],
+        _powerShellArguments([
+          'Invoke-Command',
+          '-ComputerName',
+          pc,
+          '-ScriptBlock',
+          '{1}',
+        ]),
         pc: pc,
         action: 'WinRM test',
       );
@@ -359,13 +449,13 @@ class NativeOrchestrator {
       };
       (result['scripts'] as List<Map<String, dynamic>>).add(scriptResult);
       _log('INFO', '$pc: Running $script');
-      final arguments = <String>[
+      final arguments = _powerShellArguments([
         '-File',
         _join(projectRoot, script),
         pc,
         'false',
         if (script.toLowerCase().contains('bginfo')) options.bgInfoFolder,
-      ];
+      ]);
       final completed = await _safeRun(
         'powershell.exe',
         arguments,
@@ -407,16 +497,12 @@ class NativeOrchestrator {
     _log('INFO', '$pc: Uninstall started');
     final completed = await _safeRun(
       'powershell.exe',
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-ExecutionPolicy',
-        'Bypass',
+      _powerShellArguments([
         '-File',
         _join(projectRoot, 'utility_scripts\\uninstall.ps1'),
         pc,
         'true',
-      ],
+      ]),
       pc: pc,
       action: 'Uninstall',
     );
@@ -647,16 +733,12 @@ class NativeOrchestrator {
     } else {
       final completed = await _safeRun(
         'powershell.exe',
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-ExecutionPolicy',
-          'Bypass',
+        _powerShellArguments([
           '-File',
           _join(projectRoot, 'utility_scripts\\MonitorTarget.ps1'),
           '-ComputerName',
           pc,
-        ],
+        ]),
         pc: pc,
         action: 'Monitoring',
       );
