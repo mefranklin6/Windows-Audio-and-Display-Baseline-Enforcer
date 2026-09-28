@@ -199,7 +199,7 @@ void main() {
     expect(find.byKey(const Key('audioVolume-RecordingVolume')), findsNothing);
   });
 
-  testWidgets('shows unrecorded legacy mute states as unknown', (tester) async {
+  testWidgets('allows unrecorded legacy mute states to be set', (tester) async {
     tester.view.physicalSize = const Size(1100, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -222,9 +222,16 @@ void main() {
 
     await tester.tap(find.byKey(const Key('editAudioButton')));
     await tester.pump();
+    await tester.tap(find.byKey(const Key('audioMute-PlaybackVolume')));
+    await tester.pumpAndSettle();
+    expect(find.text('Set muted'), findsOneWidget);
+    expect(find.text('Set unmuted'), findsOneWidget);
+    await tester.tap(find.text('Set unmuted'));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('saveAudioButton')));
     await tester.pumpAndSettle();
-    expect(gateway.levelsJson, isNot(contains('Mute')));
+    expect(gateway.levelsJson, contains('"PlaybackMute": false'));
+    expect(gateway.levelsJson, isNot(contains('PlaybackCommunicationMute')));
   });
 
   testWidgets('edits GUI values, exposes JSON, and opens the audio log', (
