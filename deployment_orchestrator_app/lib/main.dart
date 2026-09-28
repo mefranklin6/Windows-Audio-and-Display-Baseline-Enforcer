@@ -21,9 +21,12 @@ void main() {
 typedef DirectoryPicker = Future<String?> Function(String initialDirectory);
 typedef TargetFilePicker = Future<String?> Function(String initialDirectory);
 typedef TargetFileLoader = Future<String> Function(String path);
+typedef WebUrlLauncher = Future<void> Function(String url);
 typedef BgInfoAssetValidator = Future<BgInfoFolderValidation> Function(
   Directory folder,
 );
+
+const bgInfoDownloadUrl = 'https://download.sysinternals.com/files/BGInfo.zip';
 
 Future<String?> _pickDirectory(String initialDirectory) {
   return getDirectoryPath(
@@ -303,6 +306,7 @@ class DeploymentOrchestratorApp extends StatefulWidget {
     this.directoryPicker,
     this.targetFilePicker,
     this.targetFileLoader,
+    this.webUrlLauncher,
     this.bgInfoAssetValidator,
     this.settingsStore,
     super.key,
@@ -311,6 +315,7 @@ class DeploymentOrchestratorApp extends StatefulWidget {
   final DirectoryPicker? directoryPicker;
   final TargetFilePicker? targetFilePicker;
   final TargetFileLoader? targetFileLoader;
+  final WebUrlLauncher? webUrlLauncher;
   final BgInfoAssetValidator? bgInfoAssetValidator;
   final SettingsStore? settingsStore;
 
@@ -362,6 +367,7 @@ class _DeploymentOrchestratorAppState extends State<DeploymentOrchestratorApp> {
               directoryPicker: widget.directoryPicker ?? _pickDirectory,
               targetFilePicker: widget.targetFilePicker ?? _pickTargetFile,
               targetFileLoader: widget.targetFileLoader ?? _readTargetFile,
+              webUrlLauncher: widget.webUrlLauncher ?? openWebUrl,
               bgInfoAssetValidator:
                   widget.bgInfoAssetValidator ?? validateBgInfoFolder,
               initialSettings: _initialSettings,
@@ -838,6 +844,7 @@ class DeploymentPage extends StatefulWidget {
     required this.directoryPicker,
     required this.targetFilePicker,
     required this.targetFileLoader,
+    required this.webUrlLauncher,
     required this.bgInfoAssetValidator,
     required this.initialSettings,
     required this.onSettingsChanged,
@@ -849,6 +856,7 @@ class DeploymentPage extends StatefulWidget {
   final DirectoryPicker directoryPicker;
   final TargetFilePicker targetFilePicker;
   final TargetFileLoader targetFileLoader;
+  final WebUrlLauncher webUrlLauncher;
   final BgInfoAssetValidator bgInfoAssetValidator;
   final Map<String, dynamic>? initialSettings;
   final Future<void> Function(Map<String, dynamic>) onSettingsChanged;
@@ -1849,6 +1857,17 @@ class _DeploymentPageState extends State<DeploymentPage> {
     );
   }
 
+  Future<void> _openBgInfoDownload() async {
+    try {
+      await widget.webUrlLauncher(bgInfoDownloadUrl);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open the BGInfo download: $error')),
+      );
+    }
+  }
+
   Future<void> _showBgInfoFolderDialog({
     bool enableAfterSelection = false,
   }) async {
@@ -1864,6 +1883,12 @@ class _DeploymentPageState extends State<DeploymentPage> {
         ),
         content: const SelectableText(bgInfoFolderHelp),
         actions: [
+          TextButton.icon(
+            key: const Key('bgInfoFolderDownloadButton'),
+            onPressed: _openBgInfoDownload,
+            icon: const Icon(Icons.download),
+            label: const Text('Download BGInfo64.exe'),
+          ),
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
             child: const Text('Cancel'),
@@ -1918,6 +1943,12 @@ class _DeploymentPageState extends State<DeploymentPage> {
           ),
         ),
         actions: [
+          TextButton.icon(
+            key: const Key('bgInfoAssetErrorDownloadButton'),
+            onPressed: _openBgInfoDownload,
+            icon: const Icon(Icons.download),
+            label: const Text('Download BGInfo64.exe'),
+          ),
           FilledButton(
             key: const Key('bgInfoAssetErrorCloseButton'),
             onPressed: () => Navigator.of(dialogContext).pop(),

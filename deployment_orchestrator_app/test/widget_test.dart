@@ -27,6 +27,7 @@ DeploymentOrchestratorApp testApp({
   DirectoryPicker? directoryPicker,
   TargetFilePicker? targetFilePicker,
   TargetFileLoader? targetFileLoader,
+  WebUrlLauncher? webUrlLauncher,
   BgInfoAssetValidator? bgInfoAssetValidator,
   SettingsStore? settingsStore,
 }) {
@@ -34,6 +35,7 @@ DeploymentOrchestratorApp testApp({
     directoryPicker: directoryPicker,
     targetFilePicker: targetFilePicker,
     targetFileLoader: targetFileLoader ?? (_) async => 'PC-DEFAULT\n',
+    webUrlLauncher: webUrlLauncher,
     bgInfoAssetValidator: bgInfoAssetValidator,
     settingsStore: settingsStore ?? MemorySettingsStore(),
   );
@@ -221,6 +223,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     var pickerCalls = 0;
     String? selectedPath;
+    String? launchedUrl;
 
     await tester.pumpWidget(
       testApp(
@@ -230,6 +233,7 @@ void main() {
           return selectedPath;
         },
         bgInfoAssetValidator: (_) async => const BgInfoFolderValidation.valid(),
+        webUrlLauncher: (url) async => launchedUrl = url,
       ),
     );
     await tester.pump();
@@ -238,12 +242,17 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('BGInfo folder'), findsOneWidget);
     expect(find.text(bgInfoFolderHelp), findsOneWidget);
+    expect(find.text('Download BGInfo64.exe'), findsOneWidget);
     expect(
       tester
           .widget<SwitchListTile>(find.byKey(const Key('bgInfoSwitch')))
           .value,
       isFalse,
     );
+
+    await tester.tap(find.byKey(const Key('bgInfoFolderDownloadButton')));
+    await tester.pump();
+    expect(launchedUrl, bgInfoDownloadUrl);
 
     await tester.tap(find.byKey(const Key('bgInfoModalSelectButton')));
     await tester.pumpAndSettle();
@@ -307,6 +316,7 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
+    String? launchedUrl;
 
     await tester.pumpWidget(
       testApp(
@@ -317,6 +327,7 @@ void main() {
           'Add one .bgi file for the BGInfo configuration.',
           'Add one compatible image (.jpg, .jpeg, .png, .bmp, or .gif) for the BGInfo background image.',
         ]),
+        webUrlLauncher: (url) async => launchedUrl = url,
       ),
     );
     await tester.pump();
@@ -329,6 +340,15 @@ void main() {
     expect(find.text('BGInfo folder needs attention'), findsOneWidget);
     expect(find.textContaining('Add one BGInfo64.exe'), findsOneWidget);
     expect(find.textContaining('Add one compatible image'), findsOneWidget);
+    expect(
+      find.byKey(const Key('bgInfoAssetErrorDownloadButton')),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.byKey(const Key('bgInfoAssetErrorDownloadButton')),
+    );
+    await tester.pump();
+    expect(launchedUrl, bgInfoDownloadUrl);
     expect(
       tester
           .widget<SwitchListTile>(find.byKey(const Key('bgInfoSwitch')))

@@ -143,7 +143,7 @@ It performs the following:
 #### BGInfo Usage
 
 - Place the required BGInfo assets in a directory under `BGInfo`, then select that directory in the app.
-- That folder must contain exactly one `BGInfo64.exe`, exactly one `.bgi` file, and exactly one supported image file (`.jpg`, `.jpeg`, `.png`, `.bmp`, or `.gif`). You can keep multiple folders for different backgrounds and styles, but only the folder selected in the app is deployed.
+- That folder must contain exactly one [`BGInfo64.exe`](https://download.sysinternals.com/files/BGInfo.zip), exactly one `.bgi` file, and exactly one supported image file (`.jpg`, `.jpeg`, `.png`, `.bmp`, or `.gif`). You can keep multiple folders for different backgrounds and styles, but only the folder selected in the app is deployed.
 - Include `InstallBGInfo.ps1` in `pwsh_scripts` only on systems where you want BGInfo applied at login.
 
 ![bginfo desktop example](/images/bginfo.png)
