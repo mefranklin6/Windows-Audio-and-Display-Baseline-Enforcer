@@ -704,22 +704,43 @@ class _AudioConfigurationDialogState extends State<AudioConfigurationDialog> {
             width: 70,
             child: Text('Unknown', textAlign: TextAlign.center),
           ),
-        IconButton(
-          key: Key('audioMute-$key'),
-          tooltip: muted == null
-              ? 'Mute status unknown (not recorded)'
-              : muted
-              ? 'Muted'
-              : 'Unmuted',
-          onPressed: _editing && !_saving
-              ? () => setState(() => _mutes[key] = !(muted ?? false))
-              : null,
-          icon: Icon(switch (muted) {
-            true => Icons.volume_off_rounded,
-            false => Icons.volume_up_rounded,
-            null => Icons.help_outline_rounded,
-          }),
-        ),
+        if (muted == null)
+          PopupMenuButton<bool>(
+            key: Key('audioMute-$key'),
+            tooltip: 'Mute status unknown (not recorded). Choose a state.',
+            enabled: _editing && !_saving,
+            onSelected: (next) => setState(() => _mutes[key] = next),
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: true,
+                child: ListTile(
+                  leading: Icon(Icons.volume_off_rounded),
+                  title: Text('Set muted'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuItem(
+                value: false,
+                child: ListTile(
+                  leading: Icon(Icons.volume_up_rounded),
+                  title: Text('Set unmuted'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
+            icon: const Icon(Icons.help_outline_rounded),
+          )
+        else
+          IconButton(
+            key: Key('audioMute-$key'),
+            tooltip: muted ? 'Muted' : 'Unmuted',
+            onPressed: _editing && !_saving
+                ? () => setState(() => _mutes[key] = !muted)
+                : null,
+            icon: Icon(
+              muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+            ),
+          ),
       ],
     );
   }
