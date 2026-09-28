@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import 'app_settings.dart';
 import 'audio_configuration.dart';
+import 'configuration_backup.dart';
 import 'display_configuration.dart';
 import 'log_formatting.dart';
 import 'monitoring_report_export.dart';
@@ -27,7 +28,7 @@ typedef BgInfoAssetValidator = Future<BgInfoFolderValidation> Function(
 Future<String?> _pickDirectory(String initialDirectory) {
   return getDirectoryPath(
     initialDirectory: initialDirectory,
-    confirmButtonText: 'Select BGInfo folder',
+    confirmButtonText: 'Select folder',
     canCreateDirectories: false,
   );
 }
@@ -55,6 +56,18 @@ localhost''';
 
 const missingAvConfigurationHelp =
     "Ensure that display and audio settings are proper, then run 'SAVE_AV_SETTINGS.bat' either on the public desktop or in C:\\ProgramData\\CTS";
+
+const applicationFilesHelp =
+    'The installer configures this automatically. Change it only when running from source.';
+
+const deploymentHistoryFolderHelp =
+    'Stores shared deployment, uninstall, and backup records. UNC paths are supported.';
+
+const configurationBackupFolderHelp =
+    'Current versions use “latest”; replaced versions are kept in dated “old” folders.';
+
+const configurationHardwareRestoreWarning =
+    'If the audio or display hardware has changed since this backup was created, the restored configuration might not work as intended.';
 
 class TargetFileValidation {
   const TargetFileValidation({required this.targets, required this.errors});
@@ -461,6 +474,7 @@ class MonitoringPcResult {
     required this.displayConfiguration,
     required this.displayConfigurationError,
     required this.deploymentIntent,
+    required this.backupRecordedAt,
     required this.uninstallRecordedAt,
   });
 
@@ -506,6 +520,7 @@ class MonitoringPcResult {
               json['deployment_intent'] as Map<String, dynamic>,
             )
           : null,
+      backupRecordedAt: json['backup_recorded_at'] as String? ?? '',
       uninstallRecordedAt: json['uninstall_recorded_at'] as String? ?? '',
     );
   }
@@ -533,6 +548,7 @@ class MonitoringPcResult {
   final DisplayConfiguration? displayConfiguration;
   final String displayConfigurationError;
   final DeploymentIntent? deploymentIntent;
+  final String backupRecordedAt;
   final String uninstallRecordedAt;
 
   bool get isUninstalled => uninstallRecordedAt.isNotEmpty && !ctsDeployed;
@@ -620,11 +636,17 @@ List<String> filterPcChoices(Iterable<String> pcs, String query) {
 
 List<String> monitoringDeviceNames(MonitoringPcResult result) {
   return <String>[
-    ...?result.audioConfiguration?.devices.map((device) {
-      final name = device['Name'] as String;
-      final type = device['Type'] as String;
-      return '$name ($type)';
-    }),
+    ...?result.audioConfiguration?.devices
+        .where(
+          (device) =>
+              device['Default'] == true ||
+              device['DefaultCommunication'] == true,
+        )
+        .map((device) {
+          final name = device['Name'] as String;
+          final type = device['Type'] as String;
+          return '$name ($type)';
+        }),
     ...?result.displayConfiguration?.monitors.map(
       (monitor) => '${monitor.label} (Display)',
     ),
@@ -632,10 +654,14 @@ List<String> monitoringDeviceNames(MonitoringPcResult result) {
 }
 
 bool matchesMonitoringDeviceSearch(MonitoringPcResult result, String query) {
-  final normalizedQuery = query.trim().toLowerCase();
-  if (normalizedQuery.isEmpty) return true;
-  return monitoringDeviceNames(result)
-      .any((device) => device.toLowerCase().contains(normalizedQuery));
+  final terms = query
+      .trim()
+      .toLowerCase()
+      .split(RegExp(r'[\s,;|]+'))
+      .where((term) => term.isNotEmpty);
+  if (terms.isEmpty) return true;
+  final inventory = monitoringDeviceNames(result).join(' ').toLowerCase();
+  return terms.every(inventory.contains);
 }
 
 bool isHealthyMonitoringResult(MonitoringPcResult result) {
@@ -661,6 +687,24 @@ bool isHealthyMonitoringResult(MonitoringPcResult result) {
         result.displayConfigVersions.isNotEmpty,
         intent?.displayRecall,
       );
+}
+
+Set<String> missingConfigurationFilesForRestore(MonitoringPcResult result) {
+  if (!result.online ||
+      !result.winRm ||
+      !result.ctsDeployed ||
+      result.isUninstalled) {
+    return const {};
+  }
+  final intent = result.deploymentIntent;
+  final missing = <String>{};
+  if ((intent?.audioRecall ?? true) && !result.audioConfigured) {
+    missing.addAll(audioConfigurationFileNames);
+  }
+  if ((intent?.displayRecall ?? true) && !result.displayConfigured) {
+    missing.add(displayConfigurationFileName);
+  }
+  return missing;
 }
 
 const allDeploymentScriptNames = <String>[
@@ -820,6 +864,9 @@ class _DeploymentPageState extends State<DeploymentPage> {
   final TextEditingController _targetsController = TextEditingController();
   final TextEditingController _targetsFileController = TextEditingController();
   final TextEditingController _bgInfoFolderController = TextEditingController();
+  final TextEditingController _backupFolderController = TextEditingController();
+  final TextEditingController _deploymentHistoryFolderController =
+      TextEditingController();
   final TextEditingController _deploymentSearchController =
       TextEditingController();
   final TextEditingController _monitoringSearchController =
@@ -840,6 +887,8 @@ class _DeploymentPageState extends State<DeploymentPage> {
   bool _isRunning = false;
   bool _isMonitoring = false;
   bool _isUninstalling = false;
+  bool _isBackingUp = false;
+  bool _isRestoring = false;
   bool _isExportingMonitoringReport = false;
   bool _isUpdatingTargetsFile = false;
   bool _stopRequested = false;
@@ -858,6 +907,9 @@ class _DeploymentPageState extends State<DeploymentPage> {
   Map<String, List<ScriptDeploymentResult>> _scriptResultsByPc = const {};
   String _monitorStatus = 'Ready';
   String _uninstallStatus = 'Ready';
+  String _backupStatus = 'Ready';
+  String _restoreStatus = 'Ready';
+  String _lastActionStatus = 'Ready';
   List<String> _monitorTargets = const [];
   Set<String> _monitorCompletedTargets = const {};
   List<MonitoringPcResult> _monitorResults = const [];
@@ -868,7 +920,12 @@ class _DeploymentPageState extends State<DeploymentPage> {
   Timer? _settingsSaveTimer;
   bool _restoreBgInfoInstall = false;
 
-  bool get _controlsLocked => _isRunning || _isMonitoring || _isUninstalling;
+  bool get _controlsLocked =>
+      _isRunning ||
+      _isMonitoring ||
+      _isUninstalling ||
+      _isBackingUp ||
+      _isRestoring;
 
   @override
   void initState() {
@@ -894,6 +951,12 @@ class _DeploymentPageState extends State<DeploymentPage> {
     );
     _targetsController.text = settings?['direct_targets'] as String? ?? '';
     _bgInfoFolderController.text = settings?['bginfo_folder'] as String? ?? '';
+    _backupFolderController.text =
+        settings?['backup_folder'] as String? ??
+        _defaultBackupFolder(projectRoot);
+    _deploymentHistoryFolderController.text =
+        settings?['deployment_history_folder'] as String? ??
+        _defaultDeploymentHistoryFolder(projectRoot);
     final savedWorkers = settings?['max_workers'];
     if (savedWorkers is int && savedWorkers > 0) {
       _workersController.text = savedWorkers.toString();
@@ -935,6 +998,8 @@ class _DeploymentPageState extends State<DeploymentPage> {
     _targetsController.dispose();
     _targetsFileController.dispose();
     _bgInfoFolderController.dispose();
+    _backupFolderController.dispose();
+    _deploymentHistoryFolderController.dispose();
     _deploymentSearchController.dispose();
     _monitoringSearchController.dispose();
     _monitoringDeviceSearchController.dispose();
@@ -956,6 +1021,9 @@ class _DeploymentPageState extends State<DeploymentPage> {
       'bginfo_install': _bgInfoInstall,
       'desktop_shortcuts': _addDesktopShortcuts,
       'bginfo_folder': _bgInfoFolderController.text.trim(),
+      'backup_folder': _backupFolderController.text.trim(),
+      'deployment_history_folder': _deploymentHistoryFolderController.text
+          .trim(),
       'max_workers': int.tryParse(_workersController.text.trim()) ?? 10,
     };
   }
@@ -967,7 +1035,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
         await widget.onSettingsChanged(_settingsPayload());
       } on FileSystemException catch (error) {
         if (mounted) {
-          _showMessage('Could not save settings: ${error.message}');
+          _showErrorMessage('Could not save settings: ${error.message}');
         }
       }
     });
@@ -996,6 +1064,19 @@ class _DeploymentPageState extends State<DeploymentPage> {
       }
     }
     return Directory.current.absolute.path;
+  }
+
+  String _defaultBackupFolder(String projectRoot) =>
+      _join(_join(projectRoot, 'logs'), 'configuration_backups');
+
+  String _defaultDeploymentHistoryFolder(String projectRoot) =>
+      _join(projectRoot, 'logs');
+
+  String get _deploymentHistoryRoot {
+    final configured = _deploymentHistoryFolderController.text.trim();
+    return configured.isEmpty
+        ? _defaultDeploymentHistoryFolder(_projectRootController.text.trim())
+        : configured;
   }
 
   String? _findSourceProjectRoot() {
@@ -1082,7 +1163,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
                     await openWebUrl(update.preferredUrl);
                   } on Object catch (error) {
                     if (mounted) {
-                      _showMessage('Could not open the update: $error');
+                      _showErrorMessage('Could not open the update: $error');
                     }
                   }
                 },
@@ -1097,7 +1178,9 @@ class _DeploymentPageState extends State<DeploymentPage> {
         ),
       );
     } on Object catch (error) {
-      if (mounted) _showMessage('Could not check for updates: $error');
+      if (mounted) {
+        _showErrorMessage('Could not check for updates: $error');
+      }
     } finally {
       if (mounted) setState(() => _checkingForUpdates = false);
     }
@@ -1125,6 +1208,570 @@ class _DeploymentPageState extends State<DeploymentPage> {
     setState(() => _bgInfoFolderController.text = selected.path);
     _scheduleSettingsSave();
     return true;
+  }
+
+  Future<bool> _selectBackupFolder() async {
+    final current = _backupFolderController.text.trim();
+    final initial = current.isEmpty
+        ? _defaultBackupFolder(_projectRootController.text.trim())
+        : Directory(current).absolute.path;
+    final selectedPath = await widget.directoryPicker(initial);
+    if (selectedPath == null || selectedPath.trim().isEmpty || !mounted) {
+      return false;
+    }
+    setState(() {
+      _backupFolderController.text = Directory(selectedPath).absolute.path;
+    });
+    _scheduleSettingsSave();
+    return true;
+  }
+
+  Future<bool> _selectDeploymentHistoryFolder() async {
+    final current = _deploymentHistoryFolderController.text.trim();
+    final initial = current.isEmpty
+        ? _defaultDeploymentHistoryFolder(_projectRootController.text.trim())
+        : Directory(current).absolute.path;
+    final selectedPath = await widget.directoryPicker(initial);
+    if (selectedPath == null || selectedPath.trim().isEmpty || !mounted) {
+      return false;
+    }
+    setState(() {
+      _deploymentHistoryFolderController.text = Directory(selectedPath)
+          .absolute
+          .path;
+    });
+    _scheduleSettingsSave();
+    return true;
+  }
+
+  Future<List<String>?> _selectedOperationTargets() async {
+    final directTargets = _directTargets();
+    if (_targetSource == TargetSource.direct) {
+      if (directTargets.isEmpty) {
+        _showActionNeededMessage('Enter at least one target PC.');
+        return null;
+      }
+      return directTargets;
+    }
+    return _loadValidatedTargets();
+  }
+
+  Future<void> _startBackup({List<String>? targetsOverride}) async {
+    if (_controlsLocked) {
+      _showActionNeededMessage('Wait for the current operation to finish.');
+      return;
+    }
+    final targets = targetsOverride ?? await _selectedOperationTargets();
+    if (targets == null || targets.isEmpty || !mounted) return;
+    if (_backupFolderController.text.trim().isEmpty &&
+        !await _selectBackupFolder()) {
+      return;
+    }
+    final root = _backupFolderController.text.trim();
+    final repository = const ConfigurationBackupRepository();
+    final existing = <String>[];
+    for (final pc in targets) {
+      if (await repository.hasBackup(root, pc)) existing.add(pc);
+    }
+    if (!mounted) return;
+
+    var policy = BackupConflictPolicy.overwriteAll;
+    if (existing.isNotEmpty) {
+      final selected = await showDialog<BackupConflictPolicy>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.history_rounded),
+              SizedBox(width: 10),
+              Text('Existing backups found'),
+            ],
+          ),
+          content: SizedBox(
+            width: 520,
+            child: Text(
+              '${existing.length} selected PC(s) already have a current backup. '
+              'Overwritten backups will be retained in a dated old folder.\n\n'
+              '${existing.join(', ')}',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            OutlinedButton(
+              key: const Key('backupNewPcsOnlyButton'),
+              onPressed: () =>
+                  Navigator.of(dialogContext)
+                      .pop(BackupConflictPolicy.missingPcsOnly),
+              child: const Text('Only PCs without backups'),
+            ),
+            FilledButton(
+              key: const Key('backupOverwriteAllButton'),
+              onPressed: () =>
+                  Navigator.of(dialogContext)
+                      .pop(BackupConflictPolicy.overwriteAll),
+              child: const Text('Overwrite all'),
+            ),
+          ],
+        ),
+      );
+      if (selected == null || !mounted) return;
+      policy = selected;
+    }
+
+    setState(() {
+      _isBackingUp = true;
+      _backupStatus = 'Backing up ${targets.length} target(s)…';
+      _lastActionStatus = 'Backup: $_backupStatus';
+    });
+    final service = ConfigurationBackupService(
+      projectRoot: _projectRootController.text.trim(),
+      historyRoot: _deploymentHistoryRoot,
+    );
+    var saved = 0;
+    var skipped = 0;
+    final failures = <String>[];
+    for (final pc in targets) {
+      final alreadyExists = existing.any(
+        (candidate) => candidate.toLowerCase() == pc.toLowerCase(),
+      );
+      if (alreadyExists && policy == BackupConflictPolicy.missingPcsOnly) {
+        skipped++;
+        continue;
+      }
+      try {
+        final result = await service.backup(pc, root, overwrite: alreadyExists);
+        if (result.success && result.copiedFiles.isNotEmpty) {
+          saved++;
+        } else if (!result.success) {
+          failures.add('$pc: ${result.error}');
+        }
+      } on Object catch (error) {
+        failures.add('$pc: $error');
+      }
+      if (mounted) {
+        setState(() {
+          _backupStatus =
+              'Backing up… ${saved + skipped + failures.length} of ${targets.length}';
+          _lastActionStatus = 'Backup: $_backupStatus';
+        });
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _isBackingUp = false;
+      _backupStatus = failures.isEmpty
+          ? 'Backup complete · $saved saved${skipped == 0 ? '' : ', $skipped skipped'}'
+          : 'Backup finished with issues · $saved saved, ${failures.length} failed';
+      _lastActionStatus = 'Backup: $_backupStatus';
+    });
+    if (failures.isEmpty) {
+      _showSuccessMessage('Backups saved to $root.');
+    } else {
+      _showErrorMessage('Some backups failed:\n\n${failures.join('\n')}');
+    }
+  }
+
+  Future<void> _startRestoreConfig({List<String>? targetsOverride}) async {
+    if (_controlsLocked) {
+      _showActionNeededMessage('Wait for the current operation to finish.');
+      return;
+    }
+    final targets = targetsOverride ?? await _selectedOperationTargets();
+    if (targets == null || targets.isEmpty || !mounted) return;
+    await _restoreTargets(targets, onlyMissing: false, useLatest: false);
+  }
+
+  Future<void> _restoreAllMissingFromBackups() async {
+    if (_controlsLocked) {
+      _showActionNeededMessage('Wait for the current operation to finish.');
+      return;
+    }
+    final includedFilesByPc = <String, Set<String>>{
+      for (final result in _monitorResults)
+        if (missingConfigurationFilesForRestore(result).isNotEmpty)
+          result.pc: missingConfigurationFilesForRestore(result),
+    };
+    final targets = includedFilesByPc.keys.toList();
+    if (targets.isEmpty) {
+      _showActionNeededMessage(
+        'No monitored PCs are missing local configurations.',
+      );
+      return;
+    }
+    final proceed = await _confirmHardwareRestoreWarning();
+    if (proceed != true || !mounted) return;
+    await _restoreTargets(
+      targets,
+      onlyMissing: true,
+      useLatest: true,
+      includedFilesByPc: includedFilesByPc,
+    );
+  }
+
+  Future<bool?> _confirmHardwareRestoreWarning() {
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded),
+            SizedBox(width: 10),
+            Expanded(child: Text('Hardware may have changed')),
+          ],
+        ),
+        content: const SizedBox(
+          width: 500,
+          child: Text(configurationHardwareRestoreWarning),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel operation'),
+          ),
+          FilledButton(
+            key: const Key('proceedWithHardwareWarningButton'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Continue restore'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<RestoreConflictPolicy?> _chooseBatchRestoreConflictPolicy(
+    String firstPcWithConfig,
+  ) {
+    return showDialog<RestoreConflictPolicy>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded),
+            SizedBox(width: 10),
+            Expanded(child: Text('Existing local configurations found')),
+          ],
+        ),
+        content: SizedBox(
+          width: 540,
+          child: Text(
+            '$firstPcWithConfig already has local configuration files. '
+            'Choose how to handle every selected PC that already has a local configuration. '
+            'PCs without local configurations will still be restored.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel operation'),
+          ),
+          OutlinedButton(
+            key: const Key('restoreSkipAllExistingButton'),
+            onPressed: () =>
+                Navigator.of(dialogContext)
+                    .pop(RestoreConflictPolicy.skipAllExisting),
+            child: const Text('Skip all existing'),
+          ),
+          FilledButton(
+            key: const Key('restoreOverwriteAllButton'),
+            onPressed: () =>
+                Navigator.of(dialogContext)
+                    .pop(RestoreConflictPolicy.overwriteAll),
+            child: const Text('Overwrite all'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _restoreTargets(
+    List<String> targets, {
+    required bool onlyMissing,
+    required bool useLatest,
+    Map<String, Set<String>>? includedFilesByPc,
+  }) async {
+    final root = _backupFolderController.text.trim();
+    if (root.isEmpty) {
+      _showActionNeededMessage('Choose a backup folder in Settings first.');
+      return;
+    }
+    final repository = const ConfigurationBackupRepository();
+    final service = ConfigurationBackupService(
+      projectRoot: _projectRootController.text.trim(),
+      historyRoot: _deploymentHistoryRoot,
+    );
+    setState(() {
+      _isRestoring = true;
+      _restoreStatus = 'Preparing restore for ${targets.length} target(s)…';
+      _lastActionStatus = 'Restore: $_restoreStatus';
+    });
+    var restored = 0;
+    var skippedWithoutBackups = 0;
+    var skippedExisting = 0;
+    final failures = <String>[];
+    var cancelled = false;
+    RestoreConflictPolicy? batchConflictPolicy;
+
+    for (final pc in targets) {
+      try {
+        final versions = await repository.versions(root, pc);
+        if (versions.isEmpty) {
+          skippedWithoutBackups++;
+          continue;
+        }
+        var version = versions.first;
+        final targetState = await service.inspectTarget(pc);
+        if (!onlyMissing && targets.length > 1 && targetState.hasAny) {
+          batchConflictPolicy ??= await _chooseBatchRestoreConflictPolicy(pc);
+          if (batchConflictPolicy == null) {
+            cancelled = true;
+            break;
+          }
+          if (batchConflictPolicy == RestoreConflictPolicy.skipAllExisting) {
+            skippedExisting++;
+            if (mounted) {
+              setState(() {
+                _restoreStatus =
+                    'Restoring… ${restored + skippedWithoutBackups + skippedExisting + failures.length} of ${targets.length}';
+                _lastActionStatus = 'Restore: $_restoreStatus';
+              });
+            }
+            continue;
+          }
+        }
+        if (!useLatest) {
+          final selected = await _chooseRestoreVersion(
+            pc,
+            versions,
+            targetState,
+            service,
+            overwriteApproved:
+                batchConflictPolicy == RestoreConflictPolicy.overwriteAll,
+          );
+          if (selected == null) {
+            cancelled = true;
+            break;
+          }
+          version = selected;
+        }
+
+        final includedFiles = includedFilesByPc?[pc];
+        final result = await service.restore(
+          pc,
+          version,
+          onlyMissing: onlyMissing && includedFiles == null,
+          includedFiles: includedFiles,
+        );
+        if (result.success) {
+          restored++;
+        } else {
+          failures.add('$pc: ${result.error}');
+        }
+      } on Object catch (error) {
+        failures.add('$pc: $error');
+      }
+      if (mounted) {
+        setState(() {
+          _restoreStatus =
+              'Restoring… ${restored + skippedWithoutBackups + skippedExisting + failures.length} of ${targets.length}';
+          _lastActionStatus = 'Restore: $_restoreStatus';
+        });
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _isRestoring = false;
+      _restoreStatus = cancelled
+          ? 'Restore cancelled · $restored restored'
+          : failures.isNotEmpty
+          ? 'Restore finished with issues · $restored restored, ${failures.length} failed'
+          : 'Restore complete · $restored restored${skippedExisting == 0 ? '' : ', $skippedExisting existing skipped'}${skippedWithoutBackups == 0 ? '' : ', $skippedWithoutBackups without backups'}';
+      _lastActionStatus = 'Restore: $_restoreStatus';
+    });
+    if (failures.isNotEmpty) {
+      _showErrorMessage('Some restores failed:\n\n${failures.join('\n')}');
+    } else if (!cancelled) {
+      _showSuccessMessage(
+        '$restored PC(s) restored from the most recent selected backups.'
+        '${skippedExisting == 0 ? '' : ' $skippedExisting PC(s) with existing configurations were skipped.'}',
+      );
+    }
+  }
+
+  Future<BackupVersion?> _chooseRestoreVersion(
+    String pc,
+    List<BackupVersion> versions,
+    TargetConfigurationState target,
+    ConfigurationBackupService service, {
+    bool overwriteApproved = false,
+  }) async {
+    final repository = const ConfigurationBackupRepository();
+    var selected = versions.first;
+    var selectedBackupDates = await repository.fileModifiedDates(
+      selected.folder,
+    );
+    var identicalFiles = await service.filesIdentical(pc, selected);
+    if (!mounted) return null;
+    var checkingSelection = false;
+    return showDialog<BackupVersion>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final comparison = _configurationFileComparisons(
+            target.modifiedAt,
+            selectedBackupDates,
+            identicalFiles,
+          );
+          return AlertDialog(
+            title: Row(
+              children: [
+                Icon(
+                  target.hasAny
+                      ? Icons.warning_amber_rounded
+                      : Icons.settings_backup_restore_rounded,
+                ),
+                const SizedBox(width: 10),
+                Expanded(child: Text('Restore config · $pc')),
+              ],
+            ),
+            content: SizedBox(
+              width: 540,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    target.hasAny
+                        ? 'This PC already has local configuration files. Restoring will overwrite its local files.\n\n${checkingSelection ? 'Checking selected backup…' : comparison}'
+                        : 'This PC has no local configuration files.',
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.tertiaryContainer
+                          .withValues(alpha: 0.55),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.warning_amber_rounded, size: 20),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(configurationHardwareRestoreWarning),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<BackupVersion>(
+                    key: Key('restoreVersion-$pc'),
+                    initialValue: selected,
+                    decoration: const InputDecoration(
+                      labelText: 'Backup version',
+                    ),
+                    items: [
+                      for (final version in versions)
+                        DropdownMenuItem(
+                          value: version,
+                          child: Text(version.label),
+                        ),
+                    ],
+                    onChanged: checkingSelection
+                        ? null
+                        : (value) async {
+                            if (value != null) {
+                              setDialogState(() {
+                                selected = value;
+                                checkingSelection = true;
+                              });
+                              final dates = await repository.fileModifiedDates(
+                                value.folder,
+                              );
+                              final matches = await service.filesIdentical(
+                                pc,
+                                value,
+                              );
+                              if (!dialogContext.mounted) return;
+                              setDialogState(() {
+                                selectedBackupDates = dates;
+                                identicalFiles = matches;
+                                checkingSelection = false;
+                              });
+                            }
+                          },
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancel operation'),
+              ),
+              FilledButton(
+                key: Key('confirmRestore-$pc'),
+                onPressed: checkingSelection
+                    ? null
+                    : () => Navigator.of(dialogContext).pop(selected),
+                child: Text(
+                  target.hasAny && !overwriteApproved
+                      ? 'Overwrite local config'
+                      : 'Restore',
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  String _configurationFileComparisons(
+    Map<String, DateTime> localDates,
+    Map<String, DateTime> backupDates,
+    Map<String, bool> identicalFiles,
+  ) {
+    return configurationFileNames
+        .map((name) {
+          final local = localDates[name];
+          final backup = backupDates[name];
+          if (local == null && backup == null) {
+            return '• $name: unavailable in both';
+          }
+          if (local == null) {
+            return '• $name: backup copy will restore a missing file';
+          }
+          if (backup == null) {
+            return '• $name: only the local copy is available';
+          }
+          final localTime = _formatDateTime(local);
+          final backupTime = _formatDateTime(backup);
+          if (local.isAfter(backup)) {
+            return '• $name: local is newer ($localTime vs $backupTime)';
+          }
+          if (backup.isAfter(local)) {
+            return '• $name: backup is newer ($backupTime vs $localTime)';
+          }
+          return identicalFiles[name] == true
+              ? '• $name: files are identical ($localTime)'
+              : '• $name: modified times match, but contents differ ($localTime)';
+        })
+        .join('\n');
+  }
+
+  String _formatDateTime(DateTime value) {
+    final local = value.toLocal();
+    return '${local.year.toString().padLeft(4, '0')}-'
+        '${local.month.toString().padLeft(2, '0')}-'
+        '${local.day.toString().padLeft(2, '0')} '
+        '${local.hour.toString().padLeft(2, '0')}:'
+        '${local.minute.toString().padLeft(2, '0')}';
   }
 
   Directory _bgInfoDirectory(String value) {
@@ -1253,7 +1900,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
           path: targetsFile.path,
         );
       } else if (!silent) {
-        _showMessage('Loaded ${targetsFile.path}.');
+        _showSuccessMessage('Loaded ${targetsFile.path}.');
       }
     } on FileSystemException catch (error) {
       if (!silent) {
@@ -1289,10 +1936,10 @@ class _DeploymentPageState extends State<DeploymentPage> {
     try {
       await targetsFile.writeAsString(_targetsFileController.text);
       if (!mounted) return;
-      _showMessage('Saved ${targetsFile.path}.');
+      _showSuccessMessage('Saved ${targetsFile.path}.');
     } on FileSystemException catch (error) {
       if (!mounted) return;
-      _showMessage('Could not save target file: ${error.message}');
+      _showErrorMessage('Could not save target file: ${error.message}');
     } finally {
       if (mounted) setState(() => _isUpdatingTargetsFile = false);
     }
@@ -1461,7 +2108,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
     } on FileSystemException catch (error) {
       if (!mounted) return;
       if (showErrors) {
-        _showMessage('Could not open detailed log: ${error.message}');
+        _showErrorMessage('Could not open detailed log: ${error.message}');
       }
     }
   }
@@ -1723,7 +2370,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
     List<String>? targetsOverride,
   }) async {
     if (_controlsLocked) {
-      _showMessage('Wait for the current operation to finish.');
+      _showActionNeededMessage('Wait for the current operation to finish.');
       return null;
     }
     FocusManager.instance.primaryFocus?.unfocus();
@@ -1732,11 +2379,13 @@ class _DeploymentPageState extends State<DeploymentPage> {
     final directTargets = _directTargets();
 
     if (!Directory(_join(root, 'installer_scripts')).existsSync()) {
-      _showMessage('The installer_scripts folder was not found.');
+      _showErrorMessage('The installer_scripts folder was not found.');
       return null;
     }
     if (workers == null || workers < 1) {
-      _showMessage('Maximum workers must be a whole number of at least 1.');
+      _showActionNeededMessage(
+        'Maximum workers must be a whole number of at least 1.',
+      );
       return null;
     }
     if (_bgInfoInstall) {
@@ -1749,7 +2398,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
     if (targetsOverride == null &&
         _targetSource == TargetSource.direct &&
         directTargets.isEmpty) {
-      _showMessage('Enter at least one target PC.');
+      _showActionNeededMessage('Enter at least one target PC.');
       return null;
     }
 
@@ -1764,7 +2413,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
       deploymentTargets = fileTargets;
     }
     if (deploymentTargets.isEmpty) {
-      _showMessage('No target PCs were provided.');
+      _showActionNeededMessage('No target PCs were provided.');
       return null;
     }
     setState(() {
@@ -1772,6 +2421,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
       _status = targetsOverride == null
           ? 'Starting deployment…'
           : 'Starting filtered redeployment…';
+      _lastActionStatus = 'Deployment: $_status';
       _detailedLogPath = null;
       _knownTargets = deploymentTargets;
       _pcProgress = {
@@ -1783,6 +2433,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
 
     final orchestrator = NativeOrchestrator(
       projectRoot: root,
+      historyRoot: _deploymentHistoryRoot,
       maxWorkers: workers,
       onLog: _appendOutput,
     );
@@ -1792,6 +2443,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
         _status = targetsOverride == null
             ? 'Deploying ${deploymentTargets.length} target(s)'
             : 'Redeploying ${deploymentTargets.length} selected PC(s)';
+        _lastActionStatus = 'Deployment: $_status';
       });
       final report = DeploymentReport.fromJson(
         await orchestrator.deploy(
@@ -1808,6 +2460,9 @@ class _DeploymentPageState extends State<DeploymentPage> {
       if (!mounted) return null;
       _appendReportScriptStatuses(report);
       final reportHasProblems = report.pcs.any((result) => result.hasProblems);
+      final operationName = targetsOverride == null
+          ? 'Deployment'
+          : 'Filtered redeployment';
       setState(() {
         _deploymentOrchestrator = null;
         _isRunning = false;
@@ -1818,15 +2473,31 @@ class _DeploymentPageState extends State<DeploymentPage> {
             result.pc: _progressForResult(result),
         };
         _finishedTargets = report.pcs.map((result) => result.pc).toSet();
-        final operationName = targetsOverride == null
-            ? 'Deployment'
-            : 'Filtered redeployment';
         _status = _stopRequested
             ? '$operationName stopped'
             : reportHasProblems
             ? '$operationName finished with issues'
             : '$operationName finished successfully';
+        _lastActionStatus = 'Deployment: $_status';
       });
+      if (!_stopRequested && reportHasProblems) {
+        final details = report.pcs
+            .where((result) => result.hasProblems)
+            .expand(
+              (result) => result.issues.isEmpty
+                  ? ['${result.pc}: Deployment finished with issues.']
+                  : result.issues.map(
+                      (issue) =>
+                          '${result.pc} · ${issue.component}: ${issue.message}',
+                    ),
+            )
+            .join('\n');
+        _showPersistentMessage(
+          title: '$operationName issues',
+          message: details,
+          icon: Icons.warning_amber_rounded,
+        );
+      }
       return report;
     } on Object catch (error) {
       if (!mounted) return null;
@@ -1834,8 +2505,10 @@ class _DeploymentPageState extends State<DeploymentPage> {
         _deploymentOrchestrator = null;
         _isRunning = false;
         _status = 'Could not start deployment';
+        _lastActionStatus = 'Deployment: $_status';
       });
       _appendOutput('ERROR: $error');
+      _showErrorMessage('Deployment could not start.\n\n$error');
       return null;
     }
   }
@@ -1848,11 +2521,13 @@ class _DeploymentPageState extends State<DeploymentPage> {
     final root = _projectRootController.text.trim();
     final workers = int.tryParse(_workersController.text.trim());
     if (!Directory(_join(root, 'installer_scripts')).existsSync()) {
-      _showMessage('The installer_scripts folder was not found.');
+      _showErrorMessage('The installer_scripts folder was not found.');
       return null;
     }
     if (workers == null || workers < 1) {
-      _showMessage('Maximum workers must be a whole number of at least 1.');
+      _showActionNeededMessage(
+        'Maximum workers must be a whole number of at least 1.',
+      );
       return null;
     }
     if (_bgInfoInstall) {
@@ -1872,6 +2547,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
 
     final orchestrator = NativeOrchestrator(
       projectRoot: root,
+      historyRoot: _deploymentHistoryRoot,
       maxWorkers: workers,
       onLog: (line) => _appendOutput(
         line,
@@ -1912,6 +2588,9 @@ class _DeploymentPageState extends State<DeploymentPage> {
       return report;
     } on Object catch (error) {
       _appendOutput('ERROR: $error', onProgress: onProgress);
+      if (mounted) {
+        _showErrorMessage('Could not retry $target.\n\n$error');
+      }
       if (refreshDeploymentArea && mounted) {
         final failedResult = _failedRetryReport(target).pcs.single;
         setState(() {
@@ -1928,7 +2607,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
 
   Future<void> _startMonitoring() async {
     if (_controlsLocked) {
-      _showMessage('Wait for the current operation to finish.');
+      _showActionNeededMessage('Wait for the current operation to finish.');
       return;
     }
     FocusManager.instance.primaryFocus?.unfocus();
@@ -1937,15 +2616,17 @@ class _DeploymentPageState extends State<DeploymentPage> {
     final directTargets = _directTargets();
 
     if (!File(_join(root, 'utility_scripts\\MonitorTarget.ps1')).existsSync()) {
-      _showMessage('utility_scripts\\MonitorTarget.ps1 was not found.');
+      _showErrorMessage('utility_scripts\\MonitorTarget.ps1 was not found.');
       return;
     }
     if (workers == null || workers < 1) {
-      _showMessage('Maximum workers must be a whole number of at least 1.');
+      _showActionNeededMessage(
+        'Maximum workers must be a whole number of at least 1.',
+      );
       return;
     }
     if (_targetSource == TargetSource.direct && directTargets.isEmpty) {
-      _showMessage('Enter at least one target PC.');
+      _showActionNeededMessage('Enter at least one target PC.');
       return;
     }
 
@@ -1958,12 +2639,13 @@ class _DeploymentPageState extends State<DeploymentPage> {
       targets = fileTargets;
     }
     if (targets.isEmpty) {
-      _showMessage('No target PCs were provided.');
+      _showActionNeededMessage('No target PCs were provided.');
       return;
     }
     setState(() {
       _isMonitoring = true;
       _monitorStatus = 'Monitoring ${targets.length} target(s)…';
+      _lastActionStatus = 'Monitoring: $_monitorStatus';
       _monitorTargets = targets;
       _monitorCompletedTargets = const {};
       _monitorResults = const [];
@@ -1973,6 +2655,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
 
     final orchestrator = NativeOrchestrator(
       projectRoot: root,
+      historyRoot: _deploymentHistoryRoot,
       maxWorkers: workers,
       onMonitoringProgress: (pc) {
         if (!mounted) return;
@@ -1995,6 +2678,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
         _monitorStatus = _monitorStopRequested
             ? 'Monitoring stopped'
             : 'Monitoring complete';
+        _lastActionStatus = 'Monitoring: $_monitorStatus';
       });
     } on Object catch (error) {
       if (!mounted) return;
@@ -2002,8 +2686,9 @@ class _DeploymentPageState extends State<DeploymentPage> {
         _monitoringOrchestrator = null;
         _isMonitoring = false;
         _monitorStatus = 'Could not start monitoring';
+        _lastActionStatus = 'Monitoring: $_monitorStatus';
       });
-      _showMessage('$error');
+      _showErrorMessage('$error');
     }
   }
 
@@ -2013,30 +2698,37 @@ class _DeploymentPageState extends State<DeploymentPage> {
       setState(() {
         _monitorStopRequested = true;
         _monitorStatus = 'Stopping monitoring…';
+        _lastActionStatus = 'Monitoring: $_monitorStatus';
       });
     } else {
-      _showMessage('The monitoring process could not be stopped.');
+      _showErrorMessage('The monitoring process could not be stopped.');
     }
   }
 
-  Future<void> _confirmUninstall() async {
+  Future<void> _confirmUninstall({List<String>? targetsOverride}) async {
     if (_controlsLocked) {
-      _showMessage('Wait for the current operation to finish.');
+      _showActionNeededMessage('Wait for the current operation to finish.');
       return;
     }
+    final isSingleTarget = targetsOverride?.length == 1;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.warning_amber_rounded),
-            SizedBox(width: 10),
-            Text('Uninstall from selected PCs?'),
+            const Icon(Icons.warning_amber_rounded),
+            const SizedBox(width: 10),
+            Text(
+              isSingleTarget
+                  ? 'Uninstall from ${targetsOverride!.single}?'
+                  : 'Uninstall from selected PCs?',
+            ),
           ],
         ),
-        content: const Text(
+        content: Text(
           'This removes CTS configuration, PowerShell modules, startup files, '
-          'BGInfo files, and CTS desktop shortcuts from every selected PC. '
+          'BGInfo files, and CTS desktop shortcuts from '
+          '${isSingleTarget ? targetsOverride!.single : 'every selected PC'}. '
           'This action cannot be undone automatically.',
         ),
         actions: [
@@ -2056,30 +2748,38 @@ class _DeploymentPageState extends State<DeploymentPage> {
         ],
       ),
     );
-    if (confirmed == true && mounted) await _startUninstall();
+    if (confirmed == true && mounted) {
+      await _startUninstall(targetsOverride: targetsOverride);
+    }
   }
 
-  Future<void> _startUninstall() async {
+  Future<void> _startUninstall({List<String>? targetsOverride}) async {
     FocusManager.instance.primaryFocus?.unfocus();
     final root = _projectRootController.text.trim();
     final workers = int.tryParse(_workersController.text.trim());
     final directTargets = _directTargets();
 
     if (!File(_join(root, 'utility_scripts\\uninstall.ps1')).existsSync()) {
-      _showMessage('utility_scripts\\uninstall.ps1 was not found.');
+      _showErrorMessage('utility_scripts\\uninstall.ps1 was not found.');
       return;
     }
     if (workers == null || workers < 1) {
-      _showMessage('Maximum workers must be a whole number of at least 1.');
+      _showActionNeededMessage(
+        'Maximum workers must be a whole number of at least 1.',
+      );
       return;
     }
-    if (_targetSource == TargetSource.direct && directTargets.isEmpty) {
-      _showMessage('Enter at least one target PC.');
+    if (targetsOverride == null &&
+        _targetSource == TargetSource.direct &&
+        directTargets.isEmpty) {
+      _showActionNeededMessage('Enter at least one target PC.');
       return;
     }
 
     final List<String> targets;
-    if (_targetSource == TargetSource.direct) {
+    if (targetsOverride != null) {
+      targets = targetsOverride;
+    } else if (_targetSource == TargetSource.direct) {
       targets = directTargets;
     } else {
       final fileTargets = await _loadValidatedTargets();
@@ -2087,17 +2787,19 @@ class _DeploymentPageState extends State<DeploymentPage> {
       targets = fileTargets;
     }
     if (targets.isEmpty) {
-      _showMessage('No target PCs were provided.');
+      _showActionNeededMessage('No target PCs were provided.');
       return;
     }
 
     setState(() {
       _isUninstalling = true;
       _uninstallStatus = 'Uninstalling ${targets.length} target(s)…';
+      _lastActionStatus = 'Uninstall: $_uninstallStatus';
       _detailedLogPath = null;
     });
     final orchestrator = NativeOrchestrator(
       projectRoot: root,
+      historyRoot: _deploymentHistoryRoot,
       maxWorkers: workers,
       onLog: (line) => _appendOutput(line, updateProgress: false),
     );
@@ -2115,26 +2817,43 @@ class _DeploymentPageState extends State<DeploymentPage> {
         _uninstallStatus = failures == 0
             ? 'Uninstall finished successfully'
             : 'Uninstall finished with issues ($failures failed)';
+        _lastActionStatus = 'Uninstall: $_uninstallStatus';
       });
+      if (failures > 0) {
+        final details = report.pcs
+            .where((result) => !result.success)
+            .map(
+              (result) => result.error.isEmpty
+                  ? '${result.pc}: Uninstall failed.'
+                  : '${result.pc}: ${result.error}',
+            )
+            .join('\n');
+        _showErrorMessage('Uninstall finished with issues.\n\n$details');
+      }
     } on Object catch (error) {
       if (!mounted) return;
       setState(() {
         _uninstallOrchestrator = null;
         _isUninstalling = false;
         _uninstallStatus = 'Could not start uninstall';
+        _lastActionStatus = 'Uninstall: $_uninstallStatus';
       });
       _appendOutput('ERROR: $error', updateProgress: false);
+      _showErrorMessage('Uninstall could not start.\n\n$error');
     }
   }
 
   void _stopUninstall() {
     final orchestrator = _uninstallOrchestrator;
     if (orchestrator == null) {
-      _showMessage('The uninstall process could not be stopped.');
+      _showErrorMessage('The uninstall process could not be stopped.');
       return;
     }
     orchestrator.cancel();
-    setState(() => _uninstallStatus = 'Stopping uninstall…');
+    setState(() {
+      _uninstallStatus = 'Stopping uninstall…';
+      _lastActionStatus = 'Uninstall: $_uninstallStatus';
+    });
   }
 
   DeploymentReport _failedRetryReport(String target) {
@@ -2220,9 +2939,10 @@ class _DeploymentPageState extends State<DeploymentPage> {
       setState(() {
         _stopRequested = true;
         _status = 'Stopping deployment…';
+        _lastActionStatus = 'Deployment: $_status';
       });
     } else {
-      _showMessage('The deployment process could not be stopped.');
+      _showErrorMessage('The deployment process could not be stopped.');
     }
   }
 
@@ -2264,11 +2984,60 @@ class _DeploymentPageState extends State<DeploymentPage> {
     };
   }
 
-  void _showMessage(String message) {
+  void _showSuccessMessage(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _showErrorMessage(String message) {
+    _showPersistentMessage(
+      title: 'Error',
+      message: message,
+      icon: Icons.error_outline,
+    );
+  }
+
+  void _showActionNeededMessage(String message) {
+    _showPersistentMessage(
+      title: 'Action needed',
+      message: message,
+      icon: Icons.info_outline,
+    );
+  }
+
+  void _showPersistentMessage({
+    required String title,
+    required String message,
+    required IconData icon,
+  }) {
+    if (!mounted) return;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(icon),
+              const SizedBox(width: 10),
+              Expanded(child: Text(title)),
+            ],
+          ),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: SingleChildScrollView(child: SelectableText(message)),
+          ),
+          actions: [
+            FilledButton(
+              key: const Key('persistentMessageCloseButton'),
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -2505,23 +3274,36 @@ class _DeploymentPageState extends State<DeploymentPage> {
               const SizedBox(height: 16),
               const Divider(),
               const SizedBox(height: 8),
-              _buildPcSearchField(
-                key: const Key('monitoringPcSearchField'),
-                controller: _monitoringSearchController,
-                label: 'Find a monitored PC',
-                choices: _monitorResults.map((result) => result.pc),
-                onChanged: (value) => setState(() => _monitoringSearch = value),
-              ),
-              const SizedBox(height: 10),
-              _buildPcSearchField(
-                key: const Key('monitoringDeviceSearchField'),
-                controller: _monitoringDeviceSearchController,
-                label: 'Find a device',
-                hintText: 'Search audio or display devices',
-                clearTooltip: 'Clear device search',
-                choices: _monitorResults.expand(monitoringDeviceNames).toSet(),
-                onChanged: (value) =>
-                    setState(() => _monitoringDeviceSearch = value),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: _buildPcSearchField(
+                      key: const Key('monitoringPcSearchField'),
+                      controller: _monitoringSearchController,
+                      label: 'Find a monitored PC',
+                      choices: _monitorResults.map((result) => result.pc),
+                      onChanged: (value) =>
+                          setState(() => _monitoringSearch = value),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildPcSearchField(
+                      key: const Key('monitoringDeviceSearchField'),
+                      controller: _monitoringDeviceSearchController,
+                      label: 'Find a device',
+                      hintText: 'Search audio or display devices',
+                      helperText: 'Use multiple words to find PCs containing multiple devices.',
+                      clearTooltip: 'Clear device search',
+                      choices: _monitorResults
+                          .expand(monitoringDeviceNames)
+                          .toSet(),
+                      onChanged: (value) =>
+                          setState(() => _monitoringDeviceSearch = value),
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 10),
               LayoutBuilder(
@@ -2563,33 +3345,34 @@ class _DeploymentPageState extends State<DeploymentPage> {
                         label: const Text('Copy PC list'),
                       ),
                       OutlinedButton.icon(
-                        key: const Key('exportMonitoringCsvButton'),
+                        key: const Key('exportMonitoringReportButton'),
                         onPressed:
                             filteredResults.isEmpty ||
                                 _isExportingMonitoringReport
                             ? null
-                            : () => _exportMonitoringReport(
+                            : () => _chooseMonitoringExportFormat(
                                 filteredResults,
-                                MonitoringExportFormat.csv,
                               ),
-                        icon: const Icon(Icons.table_view_outlined, size: 18),
-                        label: const Text('CSV'),
+                        icon: const Icon(Icons.download_outlined, size: 18),
+                        label: const Text('Export'),
                       ),
-                      OutlinedButton.icon(
-                        key: const Key('exportMonitoringPdfButton'),
+                      FilledButton.tonalIcon(
+                        key: const Key('restoreMissingConfigsButton'),
                         onPressed:
-                            filteredResults.isEmpty ||
-                                _isExportingMonitoringReport
+                            _controlsLocked ||
+                                !_monitorResults.any(
+                                  (result) =>
+                                      missingConfigurationFilesForRestore(
+                                        result,
+                                      ).isNotEmpty,
+                                )
                             ? null
-                            : () => _exportMonitoringReport(
-                                filteredResults,
-                                MonitoringExportFormat.pdf,
-                              ),
+                            : _restoreAllMissingFromBackups,
                         icon: const Icon(
-                          Icons.picture_as_pdf_outlined,
-                          size: 18,
+                          Icons.settings_backup_restore_rounded,
+                          size: 20,
                         ),
-                        label: const Text('PDF'),
+                        label: const Text('Restore all missing configs'),
                       ),
                       FilledButton.tonalIcon(
                         key: const Key('redeployMonitoringReportButton'),
@@ -2687,6 +3470,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
     required Iterable<String> choices,
     required ValueChanged<String> onChanged,
     String hintText = 'Start typing a PC name',
+    String? helperText,
     String clearTooltip = 'Clear PC search',
   }) {
     return Autocomplete<String>(
@@ -2708,6 +3492,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
           decoration: InputDecoration(
             labelText: label,
             hintText: hintText,
+            helperText: helperText,
             prefixIcon: const Icon(Icons.search),
             suffixIcon: fieldController.text.isEmpty
                 ? null
@@ -2869,9 +3654,44 @@ class _DeploymentPageState extends State<DeploymentPage> {
       ClipboardData(text: results.map((result) => result.pc).join('\r\n')),
     );
     if (!mounted) return;
-    _showMessage(
+    _showSuccessMessage(
       'Copied ${results.length} PC(s) from ${_monitoringFilterLabel(_monitorFilter)}.',
     );
+  }
+
+  Future<void> _chooseMonitoringExportFormat(
+    List<MonitoringPcResult> results,
+  ) async {
+    final format = await showDialog<MonitoringExportFormat>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Export monitoring report'),
+        content: const Text('Choose a file type for the exported report.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          OutlinedButton.icon(
+            key: const Key('exportMonitoringCsvOption'),
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(MonitoringExportFormat.csv),
+            icon: const Icon(Icons.table_view_outlined),
+            label: const Text('CSV'),
+          ),
+          FilledButton.icon(
+            key: const Key('exportMonitoringPdfOption'),
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(MonitoringExportFormat.pdf),
+            icon: const Icon(Icons.picture_as_pdf_outlined),
+            label: const Text('PDF'),
+          ),
+        ],
+      ),
+    );
+    if (format != null && mounted) {
+      await _exportMonitoringReport(results, format);
+    }
   }
 
   Future<void> _exportMonitoringReport(
@@ -2924,10 +3744,10 @@ class _DeploymentPageState extends State<DeploymentPage> {
         await File(path).writeAsBytes(await buildMonitoringPdf(report));
       }
       if (!mounted) return;
-      _showMessage('${extension.toUpperCase()} report saved to $path');
+      _showSuccessMessage('${extension.toUpperCase()} report saved to $path');
     } on Object catch (error) {
       if (!mounted) return;
-      _showMessage('Could not export the monitoring report: $error');
+      _showErrorMessage('Could not export the monitoring report: $error');
     } finally {
       if (mounted) setState(() => _isExportingMonitoringReport = false);
     }
@@ -3177,6 +3997,157 @@ class _DeploymentPageState extends State<DeploymentPage> {
   }
 
   Future<void> _showMonitoringDetails(MonitoringPcResult result) async {
+    var currentResult = result;
+    var operationRunning = false;
+    var operationStatus = '';
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          Future<void> runOperation(
+            String label,
+            Future<void> Function() operation,
+          ) async {
+            if (operationRunning) return;
+            setDialogState(() {
+              operationRunning = true;
+              operationStatus = '$label in progress…';
+            });
+            Object? operationError;
+            try {
+              await operation();
+            } on Object catch (error) {
+              operationError = error;
+            }
+            if (!mounted || !dialogContext.mounted) return;
+            setDialogState(() => operationStatus = 'Re-scanning ${result.pc}…');
+            try {
+              currentResult = await _rescanMonitoringTarget(result.pc);
+              if (!mounted || !dialogContext.mounted) return;
+              setDialogState(() {
+                operationRunning = false;
+                operationStatus = operationError == null
+                    ? '$label finished · details refreshed'
+                    : '$label failed · details refreshed';
+              });
+              if (operationError != null) {
+                _showErrorMessage(
+                  '$label could not be completed.\n\n$operationError',
+                );
+              }
+            } on Object catch (error) {
+              if (!mounted || !dialogContext.mounted) return;
+              setDialogState(() {
+                operationRunning = false;
+                operationStatus = 'Could not refresh details';
+              });
+              _showErrorMessage(
+                '${operationError == null ? '$label finished' : '$label failed'}, '
+                'but ${result.pc} could not be re-scanned.\n\n$error',
+              );
+            }
+          }
+
+          return PopScope(
+            canPop: !operationRunning,
+            child: AlertDialog(
+              title: Row(
+                children: [
+                  const Icon(Icons.monitor_heart_outlined),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text(result.pc)),
+                ],
+              ),
+              content: SizedBox(
+                width: 650,
+                child: SingleChildScrollView(
+                  child: _buildMonitoringDetailsContent(
+                    dialogContext,
+                    currentResult,
+                    operationRunning: operationRunning,
+                    operationStatus: operationStatus,
+                    onMonitor: () => runOperation('Monitor', () async {}),
+                    onUninstall: () => runOperation(
+                      'Uninstall',
+                      () => _confirmUninstall(targetsOverride: [result.pc]),
+                    ),
+                    onBackup: () => runOperation(
+                      'Backup',
+                      () => _startBackup(targetsOverride: [result.pc]),
+                    ),
+                    onRestore: () => runOperation(
+                      'Restore',
+                      () => _startRestoreConfig(targetsOverride: [result.pc]),
+                    ),
+                    onDeploy: () => runOperation('Deploy', () async {
+                      await _startDeployment(targetsOverride: [result.pc]);
+                    }),
+                  ),
+                ),
+              ),
+              actions: [
+                FilledButton(
+                  onPressed: operationRunning
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Close'),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Future<MonitoringPcResult> _rescanMonitoringTarget(String pc) async {
+    final root = _projectRootController.text.trim();
+    if (!File(_join(root, 'utility_scripts\\MonitorTarget.ps1')).existsSync()) {
+      throw StateError('utility_scripts\\MonitorTarget.ps1 was not found.');
+    }
+    final report = MonitoringReport.fromJson(
+      await NativeOrchestrator(
+        projectRoot: root,
+        historyRoot: _deploymentHistoryRoot,
+        maxWorkers: 1,
+      ).monitor([pc]),
+    );
+    if (report.pcs.isEmpty) {
+      throw StateError('Monitoring returned no result for $pc.');
+    }
+    final refreshed = report.pcs.firstWhere(
+      (candidate) => candidate.pc.toLowerCase() == pc.toLowerCase(),
+      orElse: () => report.pcs.first,
+    );
+    if (mounted) {
+      setState(() {
+        final replaced = _monitorResults.any(
+          (candidate) => candidate.pc.toLowerCase() == pc.toLowerCase(),
+        );
+        _monitorResults = [
+          for (final candidate in _monitorResults)
+            if (candidate.pc.toLowerCase() == pc.toLowerCase())
+              refreshed
+            else
+              candidate,
+          if (!replaced) refreshed,
+        ];
+      });
+    }
+    return refreshed;
+  }
+
+  Widget _buildMonitoringDetailsContent(
+    BuildContext dialogContext,
+    MonitoringPcResult result, {
+    required bool operationRunning,
+    required String operationStatus,
+    required VoidCallback onMonitor,
+    required VoidCallback onUninstall,
+    required VoidCallback onBackup,
+    required VoidCallback onRestore,
+    required VoidCallback onDeploy,
+  }) {
     final intent = result.deploymentIntent;
     final ctsStatus = _monitoringComponentStatus(
       result,
@@ -3224,114 +4195,166 @@ class _DeploymentPageState extends State<DeploymentPage> {
         : bgInfoStatus == MonitoringComponentStatus.notDeployed
         ? 'Not requested by the latest deployment.'
         : 'EXE ${_yesNo(result.bgInfoExecutable)} · profile ${_yesNo(result.bgInfoProfile)} · background ${_yesNo(result.bgInfoBackground)} · startup ${_yesNo(result.bgInfoStartup)}${result.bgInfoStartupMethod.isEmpty ? '' : ' (${result.bgInfoStartupMethod})'}';
+    final buttonAction = operationRunning ? null : onMonitor;
 
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Row(
-          children: [
-            const Icon(Icons.monitor_heart_outlined),
-            const SizedBox(width: 10),
-            Expanded(child: Text(result.pc)),
-          ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Last scanned: ${result.scannedAt.isEmpty ? 'Not available' : result.scannedAt}',
+          key: const Key('monitoringDetailLastScannedText'),
+          style: Theme.of(dialogContext).textTheme.bodySmall,
         ),
-        content: SizedBox(
-          width: 650,
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (intent != null && intent.recordedAt.isNotEmpty) ...[
-                  Text(
-                    'Latest recorded deployment: ${intent.recordedAt}',
-                    style: Theme.of(dialogContext).textTheme.bodySmall,
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                if (result.isUninstalled) ...[
-                  Text(
-                    'Uninstall recorded: ${result.uninstallRecordedAt}',
-                    style: Theme.of(dialogContext).textTheme.bodySmall,
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 10,
-                  children: [
-                    _buildMonitorCheck('CTS deployment', ctsStatus),
-                    _buildMonitorCheck(
-                      'Audio configuration',
-                      audioStatus,
-                      onTap: audioStatus == MonitoringComponentStatus.present
-                          ? () => _showAudioConfiguration(result.pc)
-                          : null,
-                      buttonKey: const Key('audioConfigurationDetailsButton'),
-                    ),
-                    _buildMonitorCheck(
-                      'Display configuration',
-                      displayStatus,
-                      onTap: displayStatus == MonitoringComponentStatus.present
-                          ? () => _showDisplayConfiguration(result)
-                          : null,
-                      buttonKey: const Key('displayConfigurationDetailsButton'),
-                    ),
-                    _buildMonitorCheck('Log Out.lnk', logoutStatus),
-                    _buildMonitorCheck('Reboot.lnk', rebootStatus),
-                    _buildMonitorCheck(
-                      'BGInfo deployment',
-                      bgInfoStatus,
-                      detail: bgInfoDetail,
-                    ),
-                    _buildMonitorVersions(
-                      'AudioDeviceCmdlets',
-                      audioModuleStatus,
-                      result.audioDeviceCmdletsVersions,
-                    ),
-                    _buildMonitorVersions(
-                      'DisplayConfig',
-                      displayModuleStatus,
-                      result.displayConfigVersions,
-                    ),
-                  ],
-                ),
-                if (shouldShowMissingAvConfigurationHelp(
-                  audioStatus,
-                  displayStatus,
-                )) ...[
-                  const SizedBox(height: 16),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: OutlinedButton.icon(
-                      key: const Key('missingAvConfigurationHelpButton'),
-                      onPressed: () =>
-                          _showMissingAvConfigurationHelp(dialogContext),
-                      icon: const Icon(Icons.help_outline_rounded),
-                      label: const Text('How to fix this'),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
+        const SizedBox(height: 4),
+        Text(
+          'Last recorded deployment: ${intent?.recordedAt.isNotEmpty == true ? intent!.recordedAt : 'Not available'}',
+          style: Theme.of(dialogContext).textTheme.bodySmall,
         ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Close'),
+        const SizedBox(height: 4),
+        Text(
+          'Last recorded backup: ${result.backupRecordedAt.isEmpty ? 'Not available' : result.backupRecordedAt}',
+          key: const Key('lastRecordedBackupText'),
+          style: Theme.of(dialogContext).textTheme.bodySmall,
+        ),
+        if (result.isUninstalled) ...[
+          const SizedBox(height: 4),
+          Text(
+            'Uninstall recorded: ${result.uninstallRecordedAt}',
+            style: Theme.of(dialogContext).textTheme.bodySmall,
           ),
         ],
-      ),
+        const SizedBox(height: 18),
+        Text(
+          'Operations',
+          style: Theme.of(dialogContext).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            OutlinedButton.icon(
+              key: const Key('monitoringDetailMonitorButton'),
+              onPressed: buttonAction,
+              icon: const Icon(Icons.refresh, size: 19),
+              label: const Text('Monitor'),
+            ),
+            OutlinedButton.icon(
+              key: const Key('monitoringDetailUninstallButton'),
+              onPressed: operationRunning ? null : onUninstall,
+              icon: const Icon(Icons.delete_outline, size: 19),
+              label: const Text('Uninstall'),
+            ),
+            OutlinedButton.icon(
+              key: const Key('monitoringDetailBackupButton'),
+              onPressed: operationRunning ? null : onBackup,
+              icon: const Icon(Icons.backup_outlined, size: 19),
+              label: const Text('Backup'),
+            ),
+            OutlinedButton.icon(
+              key: const Key('monitoringDetailRestoreButton'),
+              onPressed: operationRunning ? null : onRestore,
+              icon: const Icon(Icons.settings_backup_restore_rounded, size: 19),
+              label: const Text('Restore config'),
+            ),
+            FilledButton.icon(
+              key: const Key('monitoringDetailDeployButton'),
+              onPressed: operationRunning ? null : onDeploy,
+              icon: const Icon(Icons.rocket_launch_rounded, size: 19),
+              label: const Text('Deploy'),
+            ),
+          ],
+        ),
+        if (operationStatus.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              if (operationRunning) ...[
+                const SizedBox.square(
+                  dimension: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 8),
+              ],
+              Expanded(
+                child: Text(
+                  operationStatus,
+                  key: const Key('monitoringDetailOperationStatus'),
+                  style: Theme.of(dialogContext).textTheme.bodySmall,
+                ),
+              ),
+            ],
+          ),
+        ],
+        const SizedBox(height: 18),
+        Wrap(
+          spacing: 12,
+          runSpacing: 10,
+          children: [
+            _buildMonitorCheck('CTS deployment', ctsStatus),
+            _buildMonitorCheck(
+              'Audio configuration',
+              audioStatus,
+              onTap: audioStatus == MonitoringComponentStatus.present
+                  ? () => _showAudioConfiguration(result.pc)
+                  : null,
+              onHelp: audioStatus == MonitoringComponentStatus.missing
+                  ? () => _showMissingAvConfigurationHelp(
+                      dialogContext,
+                      'Audio configuration',
+                    )
+                  : null,
+              buttonKey: const Key('audioConfigurationDetailsButton'),
+              helpButtonKey: const Key('audioConfigurationHelpButton'),
+            ),
+            _buildMonitorCheck(
+              'Display configuration',
+              displayStatus,
+              onTap: displayStatus == MonitoringComponentStatus.present
+                  ? () => _showDisplayConfiguration(result)
+                  : null,
+              onHelp: displayStatus == MonitoringComponentStatus.missing
+                  ? () => _showMissingAvConfigurationHelp(
+                      dialogContext,
+                      'Display configuration',
+                    )
+                  : null,
+              buttonKey: const Key('displayConfigurationDetailsButton'),
+              helpButtonKey: const Key('displayConfigurationHelpButton'),
+            ),
+            _buildMonitorCheck('Log Out.lnk', logoutStatus),
+            _buildMonitorCheck('Reboot.lnk', rebootStatus),
+            _buildMonitorCheck(
+              'BGInfo deployment',
+              bgInfoStatus,
+              detail: bgInfoDetail,
+            ),
+            _buildMonitorVersions(
+              'AudioDeviceCmdlets',
+              audioModuleStatus,
+              result.audioDeviceCmdletsVersions,
+            ),
+            _buildMonitorVersions(
+              'DisplayConfig',
+              displayModuleStatus,
+              result.displayConfigVersions,
+            ),
+          ],
+        ),
+      ],
     );
   }
 
   String _yesNo(bool value) => value ? 'yes' : 'no';
 
-  Future<void> _showMissingAvConfigurationHelp(BuildContext dialogContext) {
+  Future<void> _showMissingAvConfigurationHelp(
+    BuildContext dialogContext,
+    String configurationName,
+  ) {
     return showDialog<void>(
       context: dialogContext,
       builder: (context) => AlertDialog(
-        title: const Text('How to fix this'),
+        title: Text('$configurationName help'),
         content: const SizedBox(
           width: 420,
           child: SelectableText(missingAvConfigurationHelp),
@@ -3386,7 +4409,11 @@ class _DeploymentPageState extends State<DeploymentPage> {
     }
 
     final report = MonitoringReport.fromJson(
-      await NativeOrchestrator(projectRoot: root, maxWorkers: 1).monitor([pc]),
+      await NativeOrchestrator(
+        projectRoot: root,
+        historyRoot: _deploymentHistoryRoot,
+        maxWorkers: 1,
+      ).monitor([pc]),
     );
     final refreshed = report.pcs.firstWhere(
       (candidate) => candidate.pc.toLowerCase() == pc.toLowerCase(),
@@ -3421,7 +4448,9 @@ class _DeploymentPageState extends State<DeploymentPage> {
     MonitoringComponentStatus status, {
     String? detail,
     VoidCallback? onTap,
+    VoidCallback? onHelp,
     Key? buttonKey,
+    Key? helpButtonKey,
   }) {
     final color = _monitoringStatusColor(status);
     final contents = Container(
@@ -3450,7 +4479,16 @@ class _DeploymentPageState extends State<DeploymentPage> {
               ],
             ),
           ),
-          if (onTap != null) const Icon(Icons.chevron_right_rounded),
+          if (onHelp != null)
+            IconButton(
+              key: helpButtonKey,
+              tooltip: '$label help',
+              onPressed: onHelp,
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.help_outline_rounded),
+            )
+          else if (onTap != null)
+            const Icon(Icons.chevron_right_rounded),
         ],
       ),
     );
@@ -3563,6 +4601,22 @@ class _DeploymentPageState extends State<DeploymentPage> {
     );
   }
 
+  Future<void> _showSettingsHelp(String title, String message) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: SelectableText(message),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildRuntimeCard() {
     return Card(
       child: Padding(
@@ -3576,17 +4630,33 @@ class _DeploymentPageState extends State<DeploymentPage> {
               description: 'Application files and deployment concurrency.',
             ),
             const SizedBox(height: 20),
-            TextField(
-              key: const Key('projectRootField'),
-              controller: _projectRootController,
-              enabled: !_controlsLocked,
-              onChanged: (_) => _scheduleSettingsSave(),
-              decoration: const InputDecoration(
-                labelText: 'Application files',
-                hintText: r'C:\path\to\the installed application',
-                helperText: 'The installer configures this automatically. Change it only when running from source.',
-                border: OutlineInputBorder(),
-              ),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: TextField(
+                    key: const Key('projectRootField'),
+                    controller: _projectRootController,
+                    enabled: !_controlsLocked,
+                    onChanged: (_) => _scheduleSettingsSave(),
+                    decoration: const InputDecoration(
+                      labelText: 'Application files',
+                      hintText: r'C:\path\to\the installed application',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  key: const Key('applicationFilesHelpButton'),
+                  tooltip: 'Application files help',
+                  onPressed: () => _showSettingsHelp(
+                    'Application files',
+                    applicationFilesHelp,
+                  ),
+                  icon: const Icon(Icons.help_outline),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
             Row(
@@ -3607,7 +4677,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
                         key: const Key('settingsTargetsFilePickerButton'),
                         tooltip: 'Select target file',
                         onPressed: _controlsLocked ? null : _selectTargetsFile,
-                        icon: const Icon(Icons.file_open_outlined),
+                        icon: const Icon(Icons.folder_open),
                       ),
                     ),
                   ),
@@ -3617,6 +4687,79 @@ class _DeploymentPageState extends State<DeploymentPage> {
                   key: const Key('targetFileHelpButton'),
                   tooltip: 'Target file format help',
                   onPressed: _showTargetFileDialog,
+                  icon: const Icon(Icons.help_outline),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: TextField(
+                    key: const Key('deploymentHistoryFolderField'),
+                    controller: _deploymentHistoryFolderController,
+                    enabled: !_controlsLocked,
+                    onChanged: (_) => _scheduleSettingsSave(),
+                    decoration: InputDecoration(
+                      labelText: 'Deployment history folder',
+                      hintText: r'\\server\share\CTS history',
+                      border: const OutlineInputBorder(),
+                      suffixIcon: IconButton(
+                        key: const Key('deploymentHistoryFolderPickerButton'),
+                        tooltip: 'Select deployment history folder',
+                        onPressed: _controlsLocked
+                            ? null
+                            : _selectDeploymentHistoryFolder,
+                        icon: const Icon(Icons.folder_open),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  key: const Key('deploymentHistoryFolderHelpButton'),
+                  tooltip: 'Deployment history folder help',
+                  onPressed: () => _showSettingsHelp(
+                    'Deployment history folder',
+                    deploymentHistoryFolderHelp,
+                  ),
+                  icon: const Icon(Icons.help_outline),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: TextField(
+                    key: const Key('backupFolderField'),
+                    controller: _backupFolderController,
+                    enabled: !_controlsLocked,
+                    readOnly: true,
+                    onTap: _controlsLocked ? null : _selectBackupFolder,
+                    decoration: InputDecoration(
+                      labelText: 'Configuration backup folder',
+                      hintText: 'Select a folder for per-PC backup history',
+                      border: const OutlineInputBorder(),
+                      suffixIcon: IconButton(
+                        key: const Key('backupFolderPickerButton'),
+                        tooltip: 'Select configuration backup folder',
+                        onPressed: _controlsLocked ? null : _selectBackupFolder,
+                        icon: const Icon(Icons.folder_open),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  key: const Key('backupFolderHelpButton'),
+                  tooltip: 'Configuration backup folder help',
+                  onPressed: () => _showSettingsHelp(
+                    'Configuration backup folder',
+                    configurationBackupFolderHelp,
+                  ),
                   icon: const Icon(Icons.help_outline),
                 ),
               ],
@@ -4128,22 +5271,10 @@ class _DeploymentPageState extends State<DeploymentPage> {
                     ),
                     const SizedBox(height: 14),
                     _buildOperationStatus(
-                      icon: Icons.rocket_launch_outlined,
-                      label: 'Deployment',
-                      status: _status,
+                      icon: Icons.history_rounded,
+                      label: 'Last action',
+                      status: _lastActionStatus,
                       statusKey: const Key('statusText'),
-                    ),
-                    const SizedBox(height: 4),
-                    _buildOperationStatus(
-                      icon: Icons.monitor_heart_outlined,
-                      label: 'Monitoring',
-                      status: _monitorStatus,
-                    ),
-                    const SizedBox(height: 4),
-                    _buildOperationStatus(
-                      icon: Icons.delete_outline,
-                      label: 'Uninstall',
-                      status: _uninstallStatus,
                     ),
                   ],
                 );
@@ -4272,8 +5403,18 @@ class _DeploymentPageState extends State<DeploymentPage> {
         label: const Text('Stop uninstall'),
       );
     }
+    if (_isBackingUp || _isRestoring) {
+      return FilledButton.tonalIcon(
+        onPressed: null,
+        icon: const SizedBox.square(
+          dimension: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        label: Text(_isBackingUp ? 'Backing up…' : 'Restoring…'),
+      );
+    }
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 360),
+      constraints: const BoxConstraints(maxWidth: 520),
       child: Wrap(
         spacing: 8,
         runSpacing: 8,
@@ -4290,6 +5431,18 @@ class _DeploymentPageState extends State<DeploymentPage> {
             onPressed: _confirmUninstall,
             icon: const Icon(Icons.delete_outline, size: 20),
             label: const Text('Uninstall'),
+          ),
+          OutlinedButton.icon(
+            key: const Key('backupButton'),
+            onPressed: _startBackup,
+            icon: const Icon(Icons.backup_outlined, size: 20),
+            label: const Text('Backup'),
+          ),
+          OutlinedButton.icon(
+            key: const Key('restoreConfigButton'),
+            onPressed: _startRestoreConfig,
+            icon: const Icon(Icons.settings_backup_restore_rounded, size: 20),
+            label: const Text('Restore config'),
           ),
           FilledButton.icon(
             key: const Key('deployButton'),
