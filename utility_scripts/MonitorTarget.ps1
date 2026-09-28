@@ -77,10 +77,10 @@ $inspection = {
     function Get-DisplayConfigurationSummary {
         param([string]$ProfilePath)
 
-        $profile = Import-Clixml -LiteralPath $ProfilePath -ErrorAction Stop
-        $paths = @($profile.PathArray)
-        $modes = @($profile.ModeArray)
-        $pathNames = @($profile.AvailablePathNames)
+        $dispProfile = Import-Clixml -LiteralPath $ProfilePath -ErrorAction Stop
+        $paths = @($dispProfile.PathArray)
+        $modes = @($dispProfile.ModeArray)
+        $pathNames = @($dispProfile.AvailablePathNames)
         $namesByTarget = @{}
 
         for ($index = 0; $index -lt $pathNames.Count; $index++) {
@@ -235,7 +235,7 @@ $inspection = {
     if ($audioConfigured) {
         try {
             $savedLevels = Get-Content -LiteralPath $audioLevelsPath -Raw | ConvertFrom-Json
-            $savedDevices = @(Get-Content -LiteralPath $audioDevicesPath -Raw | ConvertFrom-Json)
+            $savedDevices = Get-Content -LiteralPath $audioDevicesPath -Raw | ConvertFrom-Json
             $audioConfiguration = [pscustomobject][ordered]@{
                 levels = $savedLevels
                 devices = @(
