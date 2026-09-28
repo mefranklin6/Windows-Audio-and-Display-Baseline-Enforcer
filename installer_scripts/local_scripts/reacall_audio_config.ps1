@@ -59,6 +59,18 @@ function Get-TargetDefaultsFromFile {
     }
 }
 
+function ConvertTo-StableAudioDeviceName {
+    param(
+        [AllowEmptyString()]
+        [string]$Name
+    )
+
+    # Windows can add a changing instance prefix to the parenthesized hardware
+    # name (for example, "Speakers (2- USB Audio)"). It is not a stable part
+    # of the endpoint identity.
+    return (($Name.Trim()) -replace '\(\s*\d+\s*-\s+', '(')
+}
+
 function Resolve-DeviceStrict {
     param(
         [Parameter(Mandatory)][object[]] $CurrentDevices,
@@ -77,11 +89,29 @@ function Resolve-DeviceStrict {
     # 2) ONLY if no ID match exists: Name exact match (case-insensitive exact)
     $nameMatch = $CurrentDevices | Where-Object {
         $_.Type -eq $Type -and $_.Name -eq $SavedName
-        # For case-sensitive exact match, use:
-        # $_.Type -eq $Type -and $_.Name -ceq $SavedName
     } | Select-Object -First 1
 
-    return $nameMatch
+    if ($nameMatch) { return $nameMatch }
+
+    # 3) Endpoint GUIDs and Windows instance prefixes may both change after a
+    # driver update or reconnect. Use the stable name only when it identifies
+    # exactly one current endpoint of the expected type.
+    $stableSavedName = ConvertTo-StableAudioDeviceName -Name $SavedName
+    $stableMatches = @($CurrentDevices | Where-Object {
+            $_.Type -eq $Type -and
+            (ConvertTo-StableAudioDeviceName -Name ([string]$_.Name)) -eq $stableSavedName
+        })
+
+    if ($stableMatches.Count -eq 1) {
+        Write-Log "Resolved [$Type] '$SavedName' to re-enumerated endpoint '$($stableMatches[0].Name)'."
+        return $stableMatches[0]
+    }
+
+    if ($stableMatches.Count -gt 1) {
+        Write-Log "Multiple re-enumerated matches found for [$Type] '$SavedName'; refusing an ambiguous match." "WARN"
+    }
+
+    return $null
 }
 
 function Restore-AudioLevels {
