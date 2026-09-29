@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:deployment_orchestrator_app/app_settings.dart';
 import 'package:deployment_orchestrator_app/configuration_backup.dart';
 import 'package:deployment_orchestrator_app/main.dart';
+import 'package:deployment_orchestrator_app/log_management.dart';
 import 'package:deployment_orchestrator_app/update_checker.dart';
 
 class MemorySettingsStore implements SettingsStore {
@@ -32,6 +33,7 @@ DeploymentOrchestratorApp testApp({
   UpdateChecker? updateChecker,
   BgInfoAssetValidator? bgInfoAssetValidator,
   SettingsStore? settingsStore,
+  LogCleaner? logCleaner,
 }) {
   return DeploymentOrchestratorApp(
     directoryPicker: directoryPicker,
@@ -48,6 +50,15 @@ DeploymentOrchestratorApp testApp({
         ),
     bgInfoAssetValidator: bgInfoAssetValidator,
     settingsStore: settingsStore ?? MemorySettingsStore(),
+    logSummaryReader: (_) async =>
+        const LogStorageSummary(bytes: 0, fileCount: 0),
+    logCleaner:
+        logCleaner ??
+        (_, {olderThan}) async => const LogCleanupResult(
+          deletedFiles: 0,
+          deletedBytes: 0,
+          failedFiles: 0,
+        ),
   );
 }
 
@@ -95,6 +106,61 @@ void main() {
 
     expect(checks, 1);
     expect(find.text('You are up to date'), findsNothing);
+  });
+
+  testWidgets('applies the saved log retention policy on startup', (
+    tester,
+  ) async {
+    Directory? cleanedDirectory;
+    DateTime? appliedCutoff;
+    final before = DateTime.now().subtract(const Duration(days: 30));
+
+    await tester.pumpWidget(
+      testApp(
+        settingsStore: MemorySettingsStore({
+          'log_retention_unit': 'days',
+          'log_retention_amount': 30,
+        }),
+        logCleaner: (directory, {olderThan}) async {
+          cleanedDirectory = directory;
+          appliedCutoff = olderThan;
+          return const LogCleanupResult(
+            deletedFiles: 0,
+            deletedBytes: 0,
+            failedFiles: 0,
+          );
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    final after = DateTime.now().subtract(const Duration(days: 30));
+
+    expect(cleanedDirectory?.path, endsWith('${Platform.pathSeparator}logs'));
+    expect(appliedCutoff, isNotNull);
+    expect(appliedCutoff!.isBefore(before), isFalse);
+    expect(appliedCutoff!.isAfter(after), isFalse);
+  });
+
+  testWidgets('keeps logs indefinitely by default', (tester) async {
+    var cleanupCalls = 0;
+
+    await tester.pumpWidget(
+      testApp(
+        logCleaner: (directory, {olderThan}) async {
+          cleanupCalls++;
+          return const LogCleanupResult(
+            deletedFiles: 0,
+            deletedBytes: 0,
+            failedFiles: 0,
+          );
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(cleanupCalls, 0);
   });
 
   test('shows AV repair guidance only for missing configuration', () {
@@ -154,6 +220,21 @@ void main() {
     expect(find.byKey(const Key('bgInfoFolderField')), findsNothing);
     expect(find.byKey(const Key('workersField')), findsNothing);
     expect(find.byKey(const Key('outputText')), findsNothing);
+    expect(find.byKey(const Key('logStorageCard')), findsOneWidget);
+    expect(find.byKey(const Key('logStorageSummary')), findsOneWidget);
+    expect(find.byKey(const Key('viewLogsButton')), findsOneWidget);
+    expect(find.byKey(const Key('exportAllLogsButton')), findsOneWidget);
+    expect(find.byKey(const Key('clearLogsButton')), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.byKey(const Key('logStorageCard'))).dy,
+      lessThan(tester.getTopLeft(find.text('Operations')).dy),
+    );
+    expect(
+      tester.getTopLeft(find.byKey(const Key('logStorageCard'))).dx,
+      greaterThan(
+        tester.getTopLeft(find.byKey(const Key('targetSourceSelector'))).dx,
+      ),
+    );
 
     await tester.tap(find.byKey(const Key('settingsButton')));
     await tester.pumpAndSettle();
@@ -202,6 +283,16 @@ void main() {
     );
     expect(find.byKey(const Key('backupFolderHelpButton')), findsOneWidget);
     expect(find.byKey(const Key('workersField')), findsOneWidget);
+    expect(find.byKey(const Key('logRetentionUnitField')), findsOneWidget);
+    expect(find.byKey(const Key('logRetentionAmountField')), findsOneWidget);
+    expect(
+      tester
+          .widget<DropdownButtonFormField<LogRetentionSetting>>(
+            find.byKey(const Key('logRetentionUnitField')),
+          )
+          .initialValue,
+      LogRetentionSetting.forever,
+    );
 
     for (final key in [
       const Key('projectRootField'),
@@ -533,6 +624,8 @@ void main() {
       'backup_folder': r'D:\CTS Backups',
       'deployment_history_folder': r'\\fileserver\CTS\history',
       'max_workers': 4,
+      'log_retention_unit': 'months',
+      'log_retention_amount': 6,
     });
 
     await tester.pumpWidget(testApp(settingsStore: settings));
@@ -568,6 +661,21 @@ void main() {
           .controller
           ?.text,
       'SavedAssets',
+    );
+    expect(
+      tester
+          .widget<DropdownButtonFormField<LogRetentionSetting>>(
+            find.byKey(const Key('logRetentionUnitField')),
+          )
+          .initialValue,
+      LogRetentionSetting.months,
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('logRetentionAmountField')))
+          .controller
+          ?.text,
+      '6',
     );
     expect(
       tester
@@ -775,13 +883,15 @@ void main() {
 
   test('colors severity words and makes fatal bold', () {
     final spans = buildSeveritySpans(
-      'INFO ok WARNING careful ERROR failed FATAL stopped',
+      'DEBUG details INFO ok WARNING careful ERROR failed FATAL stopped',
     );
+    final debug = spans.firstWhere((span) => span.text == 'DEBUG');
     final info = spans.firstWhere((span) => span.text == 'INFO');
     final warning = spans.firstWhere((span) => span.text == 'WARNING');
     final error = spans.firstWhere((span) => span.text == 'ERROR');
     final fatal = spans.firstWhere((span) => span.text == 'FATAL');
 
+    expect(debug.style?.color, const Color(0xff94a3b8));
     expect(info.style?.color, const Color(0xff22c55e));
     expect(warning.style?.color, const Color(0xffff9800));
     expect(error.style?.color, const Color(0xffef4444));

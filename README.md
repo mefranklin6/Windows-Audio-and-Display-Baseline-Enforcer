@@ -230,6 +230,12 @@ For example, to deploy the project to remote computers, the app user essentially
 
 ## Release Changelog
 
+### v3.4.2
+
+29 September 2026
+
+Added log size and retention management, historical log viewer, log report builder, log and report exporting.
+
 ### v3.3.2
 
 Improvements to app updating, including checking on launch and automatic re-launch.

@@ -10,6 +10,7 @@ import 'audio_configuration.dart';
 import 'configuration_backup.dart';
 import 'display_configuration.dart';
 import 'log_formatting.dart';
+import 'log_management.dart';
 import 'monitoring_report_export.dart';
 import 'native_orchestrator.dart';
 import 'update_checker.dart';
@@ -310,6 +311,8 @@ class DeploymentOrchestratorApp extends StatefulWidget {
     this.updateChecker,
     this.bgInfoAssetValidator,
     this.settingsStore,
+    this.logSummaryReader,
+    this.logCleaner,
     super.key,
   });
 
@@ -320,6 +323,8 @@ class DeploymentOrchestratorApp extends StatefulWidget {
   final UpdateChecker? updateChecker;
   final BgInfoAssetValidator? bgInfoAssetValidator;
   final SettingsStore? settingsStore;
+  final LogSummaryReader? logSummaryReader;
+  final LogCleaner? logCleaner;
 
   @override
   State<DeploymentOrchestratorApp> createState() =>
@@ -374,6 +379,9 @@ class _DeploymentOrchestratorAppState extends State<DeploymentOrchestratorApp> {
               bgInfoAssetValidator:
                   widget.bgInfoAssetValidator ?? validateBgInfoFolder,
               initialSettings: _initialSettings,
+              logSummaryReader:
+                  widget.logSummaryReader ?? readLogStorageSummary,
+              logCleaner: widget.logCleaner ?? clearLogFiles,
               onSettingsChanged: _saveSettings,
               onToggleTheme: () => setState(() => _darkMode = !_darkMode),
             )
@@ -851,6 +859,8 @@ class DeploymentPage extends StatefulWidget {
     required this.updateChecker,
     required this.bgInfoAssetValidator,
     required this.initialSettings,
+    required this.logSummaryReader,
+    required this.logCleaner,
     required this.onSettingsChanged,
     required this.onToggleTheme,
     super.key,
@@ -864,6 +874,8 @@ class DeploymentPage extends StatefulWidget {
   final UpdateChecker updateChecker;
   final BgInfoAssetValidator bgInfoAssetValidator;
   final Map<String, dynamic>? initialSettings;
+  final LogSummaryReader logSummaryReader;
+  final LogCleaner logCleaner;
   final Future<void> Function(Map<String, dynamic>) onSettingsChanged;
   final VoidCallback onToggleTheme;
 
@@ -889,6 +901,8 @@ class _DeploymentPageState extends State<DeploymentPage> {
   final TextEditingController _workersController = TextEditingController(
     text: '10',
   );
+  final TextEditingController _logRetentionAmountController =
+      TextEditingController(text: '30');
   final ScrollController _pageScrollController = ScrollController();
   final ScrollController _outputScrollController = ScrollController();
 
@@ -933,6 +947,8 @@ class _DeploymentPageState extends State<DeploymentPage> {
   String _monitoringDeviceSearch = '';
   Timer? _settingsSaveTimer;
   bool _restoreBgInfoInstall = false;
+  LogRetentionSetting _logRetentionSetting = LogRetentionSetting.forever;
+  int _logStorageRevision = 0;
 
   bool get _controlsLocked =>
       _isRunning ||
@@ -977,6 +993,19 @@ class _DeploymentPageState extends State<DeploymentPage> {
     } else if (savedWorkers is String && savedWorkers.trim().isNotEmpty) {
       _workersController.text = savedWorkers;
     }
+    final savedRetention = settings?['log_retention_unit'] as String?;
+    _logRetentionSetting = LogRetentionSetting.values.firstWhere(
+      (value) => value.name == savedRetention,
+      orElse: () => LogRetentionSetting.forever,
+    );
+    final savedRetentionAmount = settings?['log_retention_amount'];
+    if (savedRetentionAmount is int && savedRetentionAmount > 0) {
+      _logRetentionAmountController.text = savedRetentionAmount.toString();
+    } else if (savedRetentionAmount is String &&
+        int.tryParse(savedRetentionAmount) != null &&
+        int.parse(savedRetentionAmount) > 0) {
+      _logRetentionAmountController.text = savedRetentionAmount;
+    }
     _targetSource = settings?['target_source'] == TargetSource.direct.name
         ? TargetSource.direct
         : TargetSource.file;
@@ -987,6 +1016,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadTargetsFile(silent: true);
       _restoreBgInfoSetting();
+      unawaited(_enforceLogRetention());
       unawaited(_checkForUpdates(startup: true));
     });
   }
@@ -1019,6 +1049,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
     _monitoringSearchController.dispose();
     _monitoringDeviceSearchController.dispose();
     _workersController.dispose();
+    _logRetentionAmountController.dispose();
     _pageScrollController.dispose();
     _outputScrollController.dispose();
     super.dispose();
@@ -1040,7 +1071,30 @@ class _DeploymentPageState extends State<DeploymentPage> {
       'deployment_history_folder': _deploymentHistoryFolderController.text
           .trim(),
       'max_workers': int.tryParse(_workersController.text.trim()) ?? 10,
+      'log_retention_unit': _logRetentionSetting.name,
+      'log_retention_amount':
+          int.tryParse(_logRetentionAmountController.text.trim()) ?? 30,
     };
+  }
+
+  Future<void> _enforceLogRetention() async {
+    final amount = int.tryParse(_logRetentionAmountController.text.trim());
+    if (amount == null || amount <= 0) return;
+    final cutoff = logRetentionCutoff(
+      DateTime.now(),
+      amount,
+      _logRetentionSetting,
+    );
+    if (cutoff == null) return;
+    try {
+      await widget.logCleaner(
+        Directory(_join(_projectRootController.text.trim(), 'logs')),
+        olderThan: cutoff,
+      );
+      if (mounted) setState(() => _logStorageRevision++);
+    } on FileSystemException {
+      // Retention cleanup is best-effort and must not prevent startup.
+    }
   }
 
   void _scheduleSettingsSave() {
@@ -3265,6 +3319,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
                         constraints.maxWidth < 760 * textScale.clamp(1, 1.5);
                     final targetCard = _buildTargetsCard();
                     final featureCard = _buildFeaturesCard();
+                    final logStorageCard = _buildLogStorageCard();
                     if (narrow) {
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3272,6 +3327,8 @@ class _DeploymentPageState extends State<DeploymentPage> {
                           targetCard,
                           const SizedBox(height: 16),
                           featureCard,
+                          const SizedBox(height: 16),
+                          logStorageCard,
                         ],
                       );
                     }
@@ -3280,7 +3337,16 @@ class _DeploymentPageState extends State<DeploymentPage> {
                       children: [
                         Expanded(child: targetCard),
                         const SizedBox(width: 16),
-                        Expanded(child: featureCard),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              featureCard,
+                              const SizedBox(height: 16),
+                              logStorageCard,
+                            ],
+                          ),
+                        ),
                       ],
                     );
                   },
@@ -4690,26 +4756,31 @@ class _DeploymentPageState extends State<DeploymentPage> {
   Future<void> _showSettingsDialog() async {
     await showDialog<void>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.settings_outlined),
-            SizedBox(width: 10),
-            Text('Settings'),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.settings_outlined),
+              SizedBox(width: 10),
+              Text('Settings'),
+            ],
+          ),
+          content: SizedBox(
+            width: 650,
+            child: SingleChildScrollView(
+              child: _buildRuntimeCard(setSettingsDialogState: setDialogState),
+            ),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Done'),
+            ),
           ],
         ),
-        content: SizedBox(
-          width: 650,
-          child: SingleChildScrollView(child: _buildRuntimeCard()),
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Done'),
-          ),
-        ],
       ),
     );
+    if (mounted) setState(() => _logStorageRevision++);
   }
 
   Future<void> _showSettingsHelp(String title, String message) {
@@ -4728,7 +4799,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
     );
   }
 
-  Widget _buildRuntimeCard() {
+  Widget _buildRuntimeCard({StateSetter? setSettingsDialogState}) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -4926,6 +4997,68 @@ class _DeploymentPageState extends State<DeploymentPage> {
                 labelText: 'Maximum concurrent targets',
                 border: OutlineInputBorder(),
               ),
+            ),
+            const SizedBox(height: 20),
+            const Divider(),
+            const SizedBox(height: 12),
+            Text(
+              'Log retention',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Old logs are removed automatically when the app starts.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<LogRetentionSetting>(
+                    key: const Key('logRetentionUnitField'),
+                    initialValue: _logRetentionSetting,
+                    decoration: const InputDecoration(
+                      labelText: 'Retain logs for',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      for (final value in LogRetentionSetting.values)
+                        DropdownMenuItem(
+                          value: value,
+                          child: Text(value.label),
+                        ),
+                    ],
+                    onChanged: _controlsLocked
+                        ? null
+                        : (value) {
+                            if (value == null) return;
+                            setState(() => _logRetentionSetting = value);
+                            setSettingsDialogState?.call(() {});
+                            _scheduleSettingsSave();
+                          },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextField(
+                    key: const Key('logRetentionAmountField'),
+                    controller: _logRetentionAmountController,
+                    enabled:
+                        !_controlsLocked &&
+                        _logRetentionSetting != LogRetentionSetting.forever,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    onChanged: (_) => _scheduleSettingsSave(),
+                    decoration: const InputDecoration(
+                      labelText: 'Amount',
+                      hintText: '30',
+                      helperText: 'Used for days, months, or years.',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -5143,6 +5276,36 @@ class _DeploymentPageState extends State<DeploymentPage> {
                         _scheduleSettingsSave();
                       },
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLogStorageCard() {
+    return Card(
+      key: const Key('logStorageCard'),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildSectionHeading(
+              icon: Icons.article_outlined,
+              title: 'Log storage',
+              description:
+                  'Browse, report on, export, or clear local operation logs.',
+            ),
+            const SizedBox(height: 12),
+            LogManagementSection(
+              key: ValueKey(_logStorageRevision),
+              logDirectory: Directory(
+                _join(_projectRootController.text.trim(), 'logs'),
+              ),
+              summaryReader: widget.logSummaryReader,
+              enabled: !_controlsLocked,
+              showHeading: false,
             ),
           ],
         ),

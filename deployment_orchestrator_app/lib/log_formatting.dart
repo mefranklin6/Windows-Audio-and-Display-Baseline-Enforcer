@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 List<TextSpan> buildLogSeveritySpans(String text) {
   final severityPattern = RegExp(
-    r'\b(INFO|WARNING|WARN|ERROR|FATAL|CRITICAL)\b',
+    r'\b(DEBUG|INFO|WARNING|WARN|ERROR|FATAL|CRITICAL)\b',
     caseSensitive: false,
   );
   final spans = <TextSpan>[];
@@ -15,6 +15,7 @@ List<TextSpan> buildLogSeveritySpans(String text) {
     final severity = match.group(0)!;
     final normalized = severity.toUpperCase();
     final color = switch (normalized) {
+      'DEBUG' => const Color(0xff94a3b8),
       'INFO' => const Color(0xff22c55e),
       'WARNING' || 'WARN' => const Color(0xffff9800),
       'ERROR' || 'FATAL' || 'CRITICAL' => const Color(0xffef4444),
