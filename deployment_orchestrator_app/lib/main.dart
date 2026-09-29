@@ -307,6 +307,7 @@ class DeploymentOrchestratorApp extends StatefulWidget {
     this.targetFilePicker,
     this.targetFileLoader,
     this.webUrlLauncher,
+    this.updateChecker,
     this.bgInfoAssetValidator,
     this.settingsStore,
     super.key,
@@ -316,6 +317,7 @@ class DeploymentOrchestratorApp extends StatefulWidget {
   final TargetFilePicker? targetFilePicker;
   final TargetFileLoader? targetFileLoader;
   final WebUrlLauncher? webUrlLauncher;
+  final UpdateChecker? updateChecker;
   final BgInfoAssetValidator? bgInfoAssetValidator;
   final SettingsStore? settingsStore;
 
@@ -368,6 +370,7 @@ class _DeploymentOrchestratorAppState extends State<DeploymentOrchestratorApp> {
               targetFilePicker: widget.targetFilePicker ?? _pickTargetFile,
               targetFileLoader: widget.targetFileLoader ?? _readTargetFile,
               webUrlLauncher: widget.webUrlLauncher ?? openWebUrl,
+              updateChecker: widget.updateChecker ?? checkForUpdates,
               bgInfoAssetValidator:
                   widget.bgInfoAssetValidator ?? validateBgInfoFolder,
               initialSettings: _initialSettings,
@@ -845,6 +848,7 @@ class DeploymentPage extends StatefulWidget {
     required this.targetFilePicker,
     required this.targetFileLoader,
     required this.webUrlLauncher,
+    required this.updateChecker,
     required this.bgInfoAssetValidator,
     required this.initialSettings,
     required this.onSettingsChanged,
@@ -857,6 +861,7 @@ class DeploymentPage extends StatefulWidget {
   final TargetFilePicker targetFilePicker;
   final TargetFileLoader targetFileLoader;
   final WebUrlLauncher webUrlLauncher;
+  final UpdateChecker updateChecker;
   final BgInfoAssetValidator bgInfoAssetValidator;
   final Map<String, dynamic>? initialSettings;
   final Future<void> Function(Map<String, dynamic>) onSettingsChanged;
@@ -982,6 +987,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadTargetsFile(silent: true);
       _restoreBgInfoSetting();
+      unawaited(_checkForUpdates(startup: true));
     });
   }
 
@@ -1130,12 +1136,13 @@ class _DeploymentPageState extends State<DeploymentPage> {
   String _join(String parent, String child) =>
       '$parent${Platform.pathSeparator}$child';
 
-  Future<void> _checkForUpdates() async {
+  Future<void> _checkForUpdates({bool startup = false}) async {
     if (_checkingForUpdates || _installingUpdate || _controlsLocked) return;
     setState(() => _checkingForUpdates = true);
     try {
-      final update = await checkForUpdates();
+      final update = await widget.updateChecker();
       if (!mounted) return;
+      if (startup && !update.updateAvailable) return;
       await showDialog<void>(
         context: context,
         builder: (dialogContext) => AlertDialog(
@@ -1156,7 +1163,10 @@ class _DeploymentPageState extends State<DeploymentPage> {
           ),
           content: Text(
             update.updateAvailable
-                ? 'Version ${update.latestVersion} is available. You have version ${update.currentVersion}.'
+                ? update.canInstall
+                      ? 'Version ${update.latestVersion} is available. You have version ${update.currentVersion}.\n\n'
+                            'The app will close while the update is installed, then reopen automatically.'
+                      : 'Version ${update.latestVersion} is available. You have version ${update.currentVersion}.'
                 : 'Version ${update.currentVersion} is the latest release.',
           ),
           actions: [
@@ -1192,7 +1202,7 @@ class _DeploymentPageState extends State<DeploymentPage> {
         ),
       );
     } on Object catch (error) {
-      if (mounted) {
+      if (mounted && !startup) {
         _showErrorMessage('Could not check for updates: $error');
       }
     } finally {

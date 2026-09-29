@@ -10,6 +10,8 @@ const releasesPageUrl =
 const latestReleaseApiUrl =
     'https://api.github.com/repos/mefranklin6/Windows-Audio-and-Display-Baseline-Enforcer/releases/latest';
 
+typedef UpdateChecker = Future<UpdateCheckResult> Function();
+
 class UpdateCheckResult {
   const UpdateCheckResult({
     required this.currentVersion,
@@ -45,6 +47,13 @@ class PreparedUpdate {
   final File installer;
   final String sha256;
 }
+
+const updateInstallerArguments = <String>[
+  '/SILENT',
+  '/CLOSEAPPLICATIONS',
+  '/SUPPRESSMSGBOXES',
+  '/RELAUNCHAPP=1',
+];
 
 Future<UpdateCheckResult> checkForUpdates() async {
   final client = HttpClient();
@@ -158,12 +167,11 @@ Future<void> launchUpdate(PreparedUpdate update) async {
   if (!Platform.isWindows) {
     throw UnsupportedError('Installing updates is supported on Windows.');
   }
-  await Process.start(update.installer.path, const [
-    '/SILENT',
-    '/CLOSEAPPLICATIONS',
-    '/RESTARTAPPLICATIONS',
-    '/SUPPRESSMSGBOXES',
-  ], mode: ProcessStartMode.detached);
+  await Process.start(
+    update.installer.path,
+    updateInstallerArguments,
+    mode: ProcessStartMode.detached,
+  );
 }
 
 String parseSha256Checksum(

@@ -70,9 +70,19 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Run]
 Filename: "{app}\{#AppExeName}"; WorkingDir: "{#AppDataDir}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
+; In-app updates are silent, so their explicit relaunch request needs a
+; separate entry. Other unattended installs continue without opening the app.
+Filename: "{app}\{#AppExeName}"; WorkingDir: "{#AppDataDir}"; Flags: nowait runasoriginaluser; Check: ShouldRelaunchAfterUpdate
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
 Type: filesandordirs; Name: "{#AppDataDir}"
 Type: filesandordirs; Name: "{#LegacyAppDataDir}"
 Type: filesandordirs; Name: "{#LegacyInstallDir}"
+
+[Code]
+function ShouldRelaunchAfterUpdate(): Boolean;
+begin
+  Result := WizardSilent and
+    (CompareText(ExpandConstant('{param:RelaunchApp|0}'), '1') = 0);
+end;

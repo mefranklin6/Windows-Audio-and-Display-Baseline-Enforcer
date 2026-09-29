@@ -2,6 +2,12 @@ import 'package:deployment_orchestrator_app/update_checker.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('requests an explicit relaunch from the silent update installer', () {
+    expect(updateInstallerArguments, contains('/SILENT'));
+    expect(updateInstallerArguments, contains('/RELAUNCHAPP=1'));
+    expect(updateInstallerArguments, isNot(contains('/RESTARTAPPLICATIONS')));
+  });
+
   test('compares release versions with optional v prefix and build number', () {
     expect(compareVersions('v1.2.0', '1.1.9'), greaterThan(0));
     expect(compareVersions('1.2.0', 'v1.2'), 0);

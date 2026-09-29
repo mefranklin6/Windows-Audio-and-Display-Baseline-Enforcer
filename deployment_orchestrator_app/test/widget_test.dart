@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:deployment_orchestrator_app/app_settings.dart';
 import 'package:deployment_orchestrator_app/configuration_backup.dart';
 import 'package:deployment_orchestrator_app/main.dart';
+import 'package:deployment_orchestrator_app/update_checker.dart';
 
 class MemorySettingsStore implements SettingsStore {
   MemorySettingsStore([Map<String, dynamic>? initial])
@@ -28,6 +29,7 @@ DeploymentOrchestratorApp testApp({
   TargetFilePicker? targetFilePicker,
   TargetFileLoader? targetFileLoader,
   WebUrlLauncher? webUrlLauncher,
+  UpdateChecker? updateChecker,
   BgInfoAssetValidator? bgInfoAssetValidator,
   SettingsStore? settingsStore,
 }) {
@@ -36,12 +38,65 @@ DeploymentOrchestratorApp testApp({
     targetFilePicker: targetFilePicker,
     targetFileLoader: targetFileLoader ?? (_) async => 'PC-DEFAULT\n',
     webUrlLauncher: webUrlLauncher,
+    updateChecker:
+        updateChecker ??
+        () async => const UpdateCheckResult(
+          currentVersion: applicationVersion,
+          latestVersion: applicationVersion,
+          releaseUrl: releasesPageUrl,
+          downloadUrl: null,
+        ),
     bgInfoAssetValidator: bgInfoAssetValidator,
     settingsStore: settingsStore ?? MemorySettingsStore(),
   );
 }
 
 void main() {
+  testWidgets('checks for an available update once on launch', (tester) async {
+    var checks = 0;
+    await tester.pumpWidget(
+      testApp(
+        updateChecker: () async {
+          checks++;
+          return const UpdateCheckResult(
+            currentVersion: '1.0.0',
+            latestVersion: '1.1.0',
+            releaseUrl: releasesPageUrl,
+            downloadUrl: null,
+          );
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(checks, 1);
+    expect(find.text('Update available'), findsOneWidget);
+    expect(find.text('Open release'), findsOneWidget);
+  });
+
+  testWidgets('keeps a current startup update check silent', (tester) async {
+    var checks = 0;
+    await tester.pumpWidget(
+      testApp(
+        updateChecker: () async {
+          checks++;
+          return const UpdateCheckResult(
+            currentVersion: '1.0.0',
+            latestVersion: '1.0.0',
+            releaseUrl: releasesPageUrl,
+            downloadUrl: null,
+          );
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(checks, 1);
+    expect(find.text('You are up to date'), findsNothing);
+  });
+
   test('shows AV repair guidance only for missing configuration', () {
     expect(
       shouldShowMissingAvConfigurationHelp(
@@ -344,9 +399,7 @@ void main() {
       find.byKey(const Key('bgInfoAssetErrorDownloadButton')),
       findsOneWidget,
     );
-    await tester.tap(
-      find.byKey(const Key('bgInfoAssetErrorDownloadButton')),
-    );
+    await tester.tap(find.byKey(const Key('bgInfoAssetErrorDownloadButton')));
     await tester.pump();
     expect(launchedUrl, bgInfoDownloadUrl);
     expect(

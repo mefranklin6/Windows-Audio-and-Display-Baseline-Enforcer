@@ -230,6 +230,16 @@ For example, to deploy the project to remote computers, the app user essentially
 
 ## Release Changelog
 
+### v3.3.2
+
+Improvements to app updating, including checking on launch and automatic re-launch.
+
+### v3.3.1
+
+28 September 2026
+
+Add download link for SysInternal's BGInfo wherever it is mentioned.
+
 ### v3.3.0
 
 28 September 2026
